@@ -48,12 +48,12 @@
           <div class="dropdown">
             <button class="btn btn-secondary" id="menuBtn">☰ Меню</button>
             <div class="dropdown-content" id="dropdownMenu">
-              <button onclick="openClients()">Клиенты</button>
-              <button onclick="openAnalytics()">Аналитика</button>
-              <button onclick="openReport()">Отчёт</button>
-              <button onclick="openUsers()" id="menuUsers">Пользователи</button>
-              <button onclick="openAudit()" id="menuAudit">Аудит-лог</button>
-              <button onclick="logout()" id="menuLogout">Выйти</button>
+              <button onclick="selectMenuItem('clients')">Клиенты</button>
+              <button onclick="selectMenuItem('analytics')">Аналитика</button>
+              <button onclick="selectMenuItem('report')">Отчёт</button>
+              <button onclick="selectMenuItem('users')" id="menuUsers">Пользователи</button>
+              <button onclick="selectMenuItem('audit')" id="menuAudit">Аудит-лог</button>
+              <button onclick="selectMenuItem('logout')" id="menuLogout">Выйти</button>
             </div>
           </div>
         </div>
@@ -129,6 +129,8 @@ async function setTheme(theme){document.documentElement.dataset.theme=theme;$('t
 async function toggleTheme(){const now=document.documentElement.dataset.theme||'light';const next=now==='dark'?'light':'dark';await setTheme(next)}
 function openModal(id){$(id).classList.add('open');document.body.style.overflow='hidden'}function closeModal(id){$(id).classList.remove('open');document.body.style.overflow=''}
 function toggleDropdown(){$('dropdownMenu').classList.toggle('show')}
+function closeDropdown(){$('dropdownMenu').classList.remove('show')}
+function selectMenuItem(item){closeDropdown();if(item==='clients')openClients();else if(item==='analytics')openAnalytics();else if(item==='report')openReport();else if(item==='users')openUsers();else if(item==='audit')openAudit();else if(item==='logout')logout()}
 function renderUsersOptions(){const opts=S.users.map(u=>`<option value="${esc(u.id)}">${esc(u.name)}</option>`).join('');$('assignee').innerHTML=opts;$('assigneeFilter').innerHTML='<option value="all">Все мастера</option>'+opts;}
 function renderStats(){const today=new Date().toISOString().slice(0,10),done=S.items.filter(x=>x.status==='done');$('statTotal').textContent=S.items.length;$('statToday').textContent=S.items.filter(x=>dateKey(x.visit_date)===today).length;$('statScheduled').textContent=S.items.filter(x=>x.status==='scheduled').length;$('statDone').textContent=done.length;$('statRevenue').textContent=money(done.reduce((a,x)=>a+Number(x.price||0),0));}
 function getWeekStart(d){const date=new Date(d),day=(date.getDay()+6)%7;date.setDate(date.getDate()-day);return date}
@@ -164,7 +166,6 @@ async function openAudit(){if(!['admin','manager'].includes(S.me.role)){alert('�
 // Обработчики событий
 $('loginBtn').onclick=()=>login().catch(e=>alert(e.message||'Неверный логин или пароль'));
 $('loginPass').addEventListener('keydown',e=>{if(e.key==='Enter')login().catch(x=>alert(x.message))});
-$('logoutBtn')?.remove();
 $('themeBtn').onclick=toggleTheme;
 $('menuBtn').onclick=toggleDropdown;
 $('prevMonth').onclick=()=>{S.month=new Date(S.month.getFullYear(),S.month.getMonth()-1,1);renderCalendar()};
