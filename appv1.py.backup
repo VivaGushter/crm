@@ -1,0 +1,444 @@
+from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from pydantic import BaseModel, Field
+from typing import Optional
+import hashlib
+import secrets
+import sqlite3
+from pathlib import Path
+from datetime import datetime, timedelta
+
+BASE_DIR = Path(__file__).resolve().parent
+DB_PATH = BASE_DIR / "data" / "crm.db"
+DB_PATH.parent.mkdir(exist_ok=True)
+
+app = FastAPI(title="Master CRM", version="2.2.0")
+security = HTTPBasic()
+
+STATUSES = {
+    "new": "Новая",
+    "scheduled": "Назначена",
+    "work": "В работе",
+    "done": "Завершена",
+    "cancel": "Отменена",
+}
+
+
+def hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+
+def get_db() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH, timeout=5)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON;")
+    conn.execute("PRAGMA journal_mode = WAL;")
+    conn.execute("PRAGMA synchronous = NORMAL;")
+    conn.execute("PRAGMA busy_timeout = 5000;")
+    return conn
+
+
+def table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
+    return {row["name"] for row in conn.execute(f"PRAGMA table_info({table_name})")}
+
+
+def init_db() -> None:
+    conn = get_db()
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            id TEXT PRIMARY KEY,
+            password_hash TEXT NOT NULL,
+            name TEXT NOT NULL,
+            role TEXT NOT NULL DEFAULT 'user',
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            client TEXT NOT NULL,
+            visit_date TEXT NOT NULL,
+            address TEXT NOT NULL,
+            phone TEXT NOT NULL,
+            status TEXT NOT NULL,
+            price REAL NOT NULL DEFAULT 0,
+            comment TEXT,
+            assignee TEXT NOT NULL,
+            created_by TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL DEFAULT '',
+            FOREIGN KEY (assignee) REFERENCES users(id)
+        )
+        """
+    )
+
+    request_columns = table_columns(conn, "requests")
+    if "created_by" not in request_columns:
+        conn.execute("ALTER TABLE requests ADD COLUMN created_by TEXT NOT NULL DEFAULT ''")
+    if "updated_at" not in request_columns:
+        conn.execute("ALTER TABLE requests ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''")
+
+    now = datetime.now().replace(second=0, microsecond=0).isoformat(timespec="minutes")
+    defaults = [
+        ("Gushter", hash_password("Triginta33"), "Максим", "admin", now),
+        ("rus", hash_password("rus1111"), "Руслан", "user", now),
+    ]
+    for user_id, password_hash, name, role, created_at in defaults:
+        existing = conn.execute("SELECT id FROM users WHERE id = ?", (user_id,)).fetchone()
+        if existing is None:
+            conn.execute(
+                "INSERT INTO users (id, password_hash, name, role, created_at) VALUES (?, ?, ?, ?, ?)",
+                (user_id, password_hash, name, role, created_at),
+            )
+
+    conn.execute("UPDATE requests SET assignee = 'rus' WHERE assignee = 'master1'")
+    conn.execute("UPDATE requests SET assignee = 'Gushter' WHERE assignee = 'master2'")
+    conn.execute("UPDATE requests SET assignee = 'rus' WHERE assignee IS NULL OR assignee = ''")
+    conn.execute("UPDATE requests SET created_by = assignee WHERE created_by IS NULL OR created_by = ''")
+    conn.execute("UPDATE requests SET updated_at = ? WHERE updated_at IS NULL OR updated_at = ''", (now,))
+    conn.commit()
+    conn.close()
+
+
+def get_current_user(credentials: HTTPBasicCredentials = Depends(security)) -> dict:
+    conn = get_db()
+    row = conn.execute("SELECT id, password_hash, name, role FROM users WHERE id = ?", (credentials.username,)).fetchone()
+    conn.close()
+    if row is None or not secrets.compare_digest(row["password_hash"], hash_password(credentials.password)):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unauthorized",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    return {"id": row["id"], "name": row["name"], "role": row["role"]}
+
+
+def require_admin(user: dict = Depends(get_current_user)) -> dict:
+    if user["role"] != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+    return user
+
+
+class RequestIn(BaseModel):
+    client: str = Field(min_length=1, max_length=160)
+    visit_date: str = Field(min_length=16, max_length=32)
+    address: str = Field(min_length=1, max_length=500)
+    phone: str = Field(min_length=1, max_length=80)
+    status: str
+    price: float = Field(default=0, ge=0)
+    comment: Optional[str] = Field(default="", max_length=2000)
+    assignee: str = Field(min_length=1)
+
+
+class UserCreate(BaseModel):
+    id: str = Field(min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_]+$")
+    name: str = Field(min_length=1, max_length=120)
+    password: str = Field(min_length=4, max_length=256)
+    role: str = "user"
+
+
+class UserUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    password: Optional[str] = Field(default=None, min_length=4, max_length=256)
+    role: Optional[str] = None
+
+
+@app.on_event("startup")
+def startup() -> None:
+    init_db()
+
+
+@app.get("/", response_class=HTMLResponse)
+def index() -> HTMLResponse:
+    return HTMLResponse(INDEX_HTML)
+
+
+@app.get("/health")
+def health() -> JSONResponse:
+    return JSONResponse({"ok": True})
+
+
+@app.get("/api/me")
+def me(user: dict = Depends(get_current_user)) -> dict:
+    return user
+
+
+@app.get("/api/users")
+def list_users(user: dict = Depends(get_current_user)) -> list[dict]:
+    conn = get_db()
+    rows = conn.execute("SELECT id, name, role, created_at FROM users ORDER BY name COLLATE NOCASE").fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+@app.post("/api/users")
+def create_user(payload: UserCreate, admin: dict = Depends(require_admin)) -> dict:
+    if payload.role not in {"user", "admin"}:
+        raise HTTPException(400, "Invalid role")
+    conn = get_db()
+    exists = conn.execute("SELECT id FROM users WHERE id = ?", (payload.id,)).fetchone()
+    if exists:
+        conn.close()
+        raise HTTPException(400, "Пользователь с таким логином уже существует")
+    now = datetime.now().replace(second=0, microsecond=0).isoformat(timespec="minutes")
+    conn.execute(
+        "INSERT INTO users (id, password_hash, name, role, created_at) VALUES (?, ?, ?, ?, ?)",
+        (payload.id, hash_password(payload.password), payload.name, payload.role, now),
+    )
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+@app.put("/api/users/{user_id}")
+def update_user(user_id: str, payload: UserUpdate, admin: dict = Depends(require_admin)) -> dict:
+    if payload.role is not None and payload.role not in {"user", "admin"}:
+        raise HTTPException(400, "Invalid role")
+    conn = get_db()
+    existing = conn.execute("SELECT id, role FROM users WHERE id = ?", (user_id,)).fetchone()
+    if existing is None:
+        conn.close()
+        raise HTTPException(404, "User not found")
+    if user_id == admin["id"] and payload.role == "user":
+        conn.close()
+        raise HTTPException(400, "Нельзя снять роль админа с текущего аккаунта")
+    changes, values = [], []
+    if payload.name is not None:
+        changes.append("name = ?")
+        values.append(payload.name)
+    if payload.password:
+        changes.append("password_hash = ?")
+        values.append(hash_password(payload.password))
+    if payload.role is not None:
+        changes.append("role = ?")
+        values.append(payload.role)
+    if changes:
+        values.append(user_id)
+        conn.execute(f"UPDATE users SET {', '.join(changes)} WHERE id = ?", values)
+        conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+@app.delete("/api/users/{user_id}")
+def delete_user(user_id: str, admin: dict = Depends(require_admin)) -> dict:
+    if user_id == admin["id"]:
+        raise HTTPException(400, "Нельзя удалить свой текущий аккаунт")
+    conn = get_db()
+    user_row = conn.execute("SELECT id, role FROM users WHERE id = ?", (user_id,)).fetchone()
+    if user_row is None:
+        conn.close()
+        raise HTTPException(404, "User not found")
+    if user_row["role"] == "admin":
+        admins = conn.execute("SELECT COUNT(*) AS count FROM users WHERE role = 'admin'").fetchone()["count"]
+        if admins <= 1:
+            conn.close()
+            raise HTTPException(400, "Нельзя удалить последнего администратора")
+    references = conn.execute("SELECT COUNT(*) AS count FROM requests WHERE assignee = ?", (user_id,)).fetchone()["count"]
+    if references:
+        conn.close()
+        raise HTTPException(400, "Нельзя удалить пользователя: на него назначены заявки")
+    conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+@app.get("/api/requests")
+def list_requests(user: dict = Depends(get_current_user)) -> list[dict]:
+    conn = get_db()
+    rows = conn.execute(
+        """
+        SELECT r.*, COALESCE(u.name, r.assignee) AS assignee_name
+        FROM requests r
+        LEFT JOIN users u ON u.id = r.assignee
+        ORDER BY r.visit_date ASC, r.id DESC
+        """
+    ).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def validate_request_payload(conn: sqlite3.Connection, payload: RequestIn) -> None:
+    if payload.status not in STATUSES:
+        raise HTTPException(400, "Invalid status")
+    assignee = conn.execute("SELECT id FROM users WHERE id = ?", (payload.assignee,)).fetchone()
+    if assignee is None:
+        raise HTTPException(400, "Выбранный исполнитель не существует")
+
+
+@app.post("/api/requests")
+def create_request(payload: RequestIn, user: dict = Depends(get_current_user)) -> dict:
+    conn = get_db()
+    try:
+        validate_request_payload(conn, payload)
+        now = datetime.now().replace(second=0, microsecond=0).isoformat(timespec="minutes")
+        cur = conn.execute(
+            """
+            INSERT INTO requests (client, visit_date, address, phone, status, price, comment, assignee, created_by, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (payload.client, payload.visit_date, payload.address, payload.phone, payload.status, payload.price, payload.comment or "", payload.assignee, user["id"], now),
+        )
+        conn.commit()
+        return {"ok": True, "id": cur.lastrowid}
+    finally:
+        conn.close()
+
+
+@app.put("/api/requests/{request_id}")
+def update_request(request_id: int, payload: RequestIn, user: dict = Depends(get_current_user)) -> dict:
+    conn = get_db()
+    try:
+        validate_request_payload(conn, payload)
+        exists = conn.execute("SELECT id FROM requests WHERE id = ?", (request_id,)).fetchone()
+        if exists is None:
+            raise HTTPException(404, "Request not found")
+        now = datetime.now().replace(second=0, microsecond=0).isoformat(timespec="minutes")
+        conn.execute(
+            """
+            UPDATE requests
+            SET client=?, visit_date=?, address=?, phone=?, status=?, price=?, comment=?, assignee=?, updated_at=?
+            WHERE id=?
+            """,
+            (payload.client, payload.visit_date, payload.address, payload.phone, payload.status, payload.price, payload.comment or "", payload.assignee, now, request_id),
+        )
+        conn.commit()
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
+@app.delete("/api/requests/{request_id}")
+def delete_request(request_id: int, user: dict = Depends(get_current_user)) -> dict:
+    conn = get_db()
+    try:
+        cur = conn.execute("DELETE FROM requests WHERE id = ?", (request_id,))
+        conn.commit()
+        if not cur.rowcount:
+            raise HTTPException(404, "Request not found")
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
+INDEX_HTML = r'''<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>CRM заявок мастера</title>
+  <link rel="preconnect" href="https://api.fontshare.com">
+  <link href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700,900&f[]=general-sans@400,500,600,700&display=swap" rel="stylesheet">
+  <style>
+    :root, [data-theme="light"] { --bg:#f7f6f2; --surface:#fbfbf9; --surface2:#f3f0ec; --border:#d4d1ca; --text:#28251d; --muted:#706d67; --inverse:#f9f8f4; --primary:#01696f; --primary-hover:#0c4e54; --primary-soft:#d7e3df; --success:#437a22; --warning:#a86000; --danger:#a13544; --blue:#006494; --purple:#7a39bb; --radius:14px; --radius-sm:9px; --shadow:0 6px 20px rgba(40,37,29,.08); }
+    [data-theme="dark"] { --bg:#171614; --surface:#1c1b19; --surface2:#272421; --border:#393836; --text:#eceae5; --muted:#b2aea8; --inverse:#141311; --primary:#4f98a3; --primary-hover:#227f8b; --primary-soft:#2b3938; --success:#6daa45; --warning:#edb336; --danger:#dd6974; --blue:#5591c7; --purple:#a86fdf; --shadow:0 8px 28px rgba(0,0,0,.3); }
+    *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 'General Sans',Arial,sans-serif} button,input,textarea,select{font:inherit;color:inherit} button{cursor:pointer} input,textarea,select{width:100%;min-height:48px;padding:12px 14px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--surface);font-size:16px} textarea{min-height:96px;resize:vertical}
+    .hidden{display:none!important}.shell{max-width:1400px;margin:auto;padding:16px 16px 96px}.top{display:flex;gap:12px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;margin-bottom:16px}.title{margin:0;font:800 clamp(26px,4vw,34px)/1.1 'Satoshi',Arial,sans-serif}.sub,.muted{color:var(--muted)}.actions{display:flex;gap:8px;flex-wrap:wrap}.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px}.btn{min-height:44px;padding:10px 14px;border:1px solid transparent;border-radius:var(--radius-sm);font-weight:700;background:transparent}.btn-primary{background:var(--primary);color:var(--inverse)}.btn-primary:hover{background:var(--primary-hover)}.btn-secondary{border-color:var(--border);background:var(--surface)}.btn-danger{border-color:color-mix(in srgb,var(--danger) 38%,transparent);color:var(--danger)}.btn-sm{min-height:36px;padding:6px 10px;font-size:14px}.stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:16px}.stat{padding:14px}.stat b{display:block;font:800 28px/1.05 'Satoshi',Arial,sans-serif;margin-top:4px}
+    .view-switch{display:flex;gap:6px;margin:14px 0}.view-switch .btn.active{background:var(--primary);color:var(--inverse)}
+    .calendar-tools{display:grid;grid-template-columns:44px 1fr 44px;align-items:center;gap:8px;margin:14px 0}.month{text-align:center;font:800 20px 'Satoshi',Arial,sans-serif}
+    .month-view .week,.month-view .days{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}.week div{text-align:center;color:var(--muted);font-size:12px;font-weight:700}.day{min-height:76px;padding:6px;text-align:left;border:1px solid var(--border);border-radius:10px;background:var(--surface)}.day.other{opacity:.45}.day.has{background:var(--primary-soft)}.day.active{outline:2px solid var(--primary)}.dhead{display:flex;justify-content:space-between;font-weight:700}.dot{font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:4px;padding:1px 5px;border-radius:99px;background:color-mix(in srgb,var(--primary) 14%,transparent)}
+    .week-view{display:grid;grid-template-columns:repeat(7,1fr);gap:8px}.week-col{border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden}.week-head{background:var(--surface2);padding:10px;text-align:center;font-weight:800;border-bottom:1px solid var(--border)}.week-head.today{background:var(--primary);color:var(--inverse)}.week-body{min-height:280px;padding:8px;background:var(--surface)}.week-card{padding:8px;margin-bottom:8px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);font-size:13px}.week-card b{display:block;margin-bottom:4px}.week-card small{color:var(--muted);display:block}
+    .day-view{padding:16px}.day-card{padding:14px;margin-bottom:10px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--surface2)}.day-card .top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px}.day-card .time{font-weight:800;color:var(--primary)}.day-card .client{font-weight:700;font-size:17px}.day-card .meta{display:grid;gap:4px;color:var(--muted);font-size:14px}
+    .filters{display:grid;gap:10px;margin:14px 0}.list{display:grid;gap:10px}.request{border:1px solid var(--border);border-radius:var(--radius);padding:14px;background:var(--surface)}.row{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}.name{font-weight:800;font-size:17px}.badge{font-size:12px;font-weight:800;padding:5px 9px;border-radius:99px;white-space:nowrap}.s-new{color:var(--blue);background:color-mix(in srgb,var(--blue) 15%,transparent)}.s-scheduled{color:var(--purple);background:color-mix(in srgb,var(--purple) 15%,transparent)}.s-work{color:var(--warning);background:color-mix(in srgb,var(--warning) 15%,transparent)}.s-done{color:var(--success);background:color-mix(in srgb,var(--success) 15%,transparent)}.s-cancel{color:var(--danger);background:color-mix(in srgb,var(--danger) 15%,transparent)}.meta{display:grid;gap:5px;margin:10px 0;color:var(--muted);font-size:14px}.two{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+    .fab{position:fixed;right:16px;bottom:16px;z-index:10;box-shadow:var(--shadow)}.modal{position:fixed;inset:0;background:rgba(0,0,0,.38);display:none;align-items:flex-end;justify-content:center;z-index:20}.modal.open{display:flex}.sheet{width:min(100%,720px);max-height:94dvh;overflow:auto;background:var(--bg);border-radius:20px 20px 0 0;padding:18px;padding-bottom:calc(24px + env(safe-area-inset-bottom))}.handle{width:52px;height:5px;background:var(--border);border-radius:99px;margin:0 auto 14px}.field{display:grid;gap:6px;margin:12px 0}.field label{font-size:14px;font-weight:700}.empty{padding:18px;border:1px dashed var(--border);border-radius:var(--radius);color:var(--muted)}.login{min-height:100dvh;display:grid;place-items:center;padding:16px}.login .card{width:min(100%,420px)}.remember{display:flex;gap:8px;align-items:center;margin:12px 0}.remember input{width:20px;min-height:20px}.admin-users{display:grid;gap:10px}.user{padding:12px;border:1px solid var(--border);border-radius:var(--radius-sm);display:flex;justify-content:space-between;gap:8px;align-items:center}.user small{color:var(--muted)}
+    @media(min-width:1100px){.shell{padding:24px}.stats{grid-template-columns:repeat(5,1fr)}.grid{grid-template-columns:minmax(0,1fr) 340px}.filters{grid-template-columns:2fr 1fr 1fr 1fr}.fab{display:none}.desktop-new{display:inline-flex}.day{min-height:90px}}
+    @media(max-width:1099px){.desktop-new{display:none}.week-view{grid-template-columns:1fr}.week-col{margin-bottom:12px}.day{min-height:70px}.dot{font-size:10px}}
+  </style>
+</head>
+<body>
+  <section id="loginView" class="login">
+    <div class="card">
+      <h1 class="title">CRM заявок мастера</h1>
+      <p class="sub">Календарь выездов, заявки и общая база.</p>
+      <div class="field"><label for="loginUser">Логин</label><input id="loginUser" autocomplete="username"></div>
+      <div class="field"><label for="loginPass">Пароль</label><input id="loginPass" type="password" autocomplete="current-password"></div>
+      <label class="remember"><input id="rememberMe" type="checkbox"> <span>Запомнить меня на этом устройстве</span></label>
+      <button id="loginBtn" class="btn btn-primary" style="width:100%">Войти</button>
+    </div>
+  </section>
+
+  <main id="appView" class="hidden">
+    <div class="shell">
+      <header class="top">
+        <div><h1 class="title">CRM заявок</h1><div class="sub">Календарь выездов, статусы и заявки.</div></div>
+        <div class="actions"><span class="btn btn-secondary" id="sessionPill">—</span><button class="btn btn-secondary hidden" id="adminBtn">Пользователи</button><button class="btn btn-secondary" id="themeBtn" aria-label="Переключить тему">🌙</button><button class="btn btn-secondary" id="logoutBtn">Выйти</button></div>
+      </header>
+      <section class="stats"><div class="card stat"><small class="muted">Всего</small><b id="statTotal">0</b></div><div class="card stat"><small class="muted">Сегодня</small><b id="statToday">0</b></div><div class="card stat"><small class="muted">Назначено</small><b id="statScheduled">0</b></div><div class="card stat"><small class="muted">Завершено</small><b id="statDone">0</b></div><div class="card stat"><small class="muted">Сумма завершённых</small><b id="statRevenue">0 ₽</b></div></section>
+      
+      <div class="view-switch"><button class="btn btn-sm active" data-view="month">Месяц</button><button class="btn btn-sm" data-view="week">Неделя</button><button class="btn btn-sm" data-view="day">День</button></div>
+      
+      <div class="card month-view" id="monthView">
+        <h2 style="margin:0">Календарь</h2><div class="sub">Выбери день, чтобы увидеть назначенные заявки.</div>
+        <div class="calendar-tools"><button class="btn btn-secondary" id="prevMonth">←</button><div id="monthLabel" class="month"></div><button class="btn btn-secondary" id="nextMonth">→</button></div>
+        <div class="week"><div>Пн</div><div>Вт</div><div>Ср</div><div>Чт</div><div>Пт</div><div>Сб</div><div>Вс</div></div>
+        <div id="calendar" class="days"></div>
+      </div>
+      
+      <div class="card week-view hidden" id="weekView">
+        <div class="calendar-tools"><button class="btn btn-secondary" id="prevWeek">←</button><div id="weekLabel" class="month"></div><button class="btn btn-secondary" id="nextWeek">→</button></div>
+        <div id="weekGrid" style="display:grid;grid-template-columns:repeat(7,1fr);gap:8px"></div>
+      </div>
+      
+      <div class="card day-view hidden" id="dayView">
+        <div class="calendar-tools"><button class="btn btn-secondary" id="prevDay">←</button><div id="dayLabel" class="month"></div><button class="btn btn-secondary" id="nextDay">→</button></div>
+        <div id="dayList"></div>
+      </div>
+      
+      <hr style="border:0;border-top:1px solid var(--border);margin:18px 0">
+      <div class="row"><div><h2 id="dateTitle" style="margin:0">Заявки на день</h2><div class="sub">Нажми «Изменить」 для правки заявки.</div></div><button class="btn btn-primary desktop-new" id="newRequestTop">+ Новая заявка</button></div>
+      <div class="filters"><input id="search" placeholder="Поиск: клиент, адрес, телефон"><select id="statusFilter"><option value="all">Все статусы</option><option value="new">Новые</option><option value="scheduled">Назначенные</option><option value="work">В работе</option><option value="done">Завершённые</option><option value="cancel">Отменённые</option></select><select id="assigneeFilter"><option value="all">Все мастера</option></select><input id="dateFilter" type="date"></div>
+      <div id="requests" class="list"></div>
+    </div>
+    <button id="newRequestFab" class="btn btn-primary fab">+ Новая заявка</button>
+  </main>
+
+  <div id="requestModal" class="modal"><div class="sheet"><div class="handle"></div><div class="row"><div><h2 id="requestFormTitle" style="margin:0">Новая заявка</h2><div class="sub">Все обязательные поля отмечены в форме.</div></div><button class="btn btn-secondary" data-close="requestModal">Закрыть</button></div><form id="requestForm"><input id="requestId" type="hidden"><div class="field"><label>Клиент</label><input id="client" required></div><div class="field"><label>Дата и время выезда</label><input id="visitDate" type="datetime-local" required></div><div class="field"><label>Адрес</label><input id="address" required></div><div class="field"><label>Телефон</label><input id="phone" required inputmode="tel"></div><div class="field"><label>Статус</label><select id="requestStatus"><option value="new">Новая</option><option value="scheduled">Назначена</option><option value="work">В работе</option><option value="done">Завершена</option><option value="cancel">Отменена</option></select></div><div class="field"><label>Цена</label><input id="price" type="number" min="0" step="1" value="0"></div><div class="field"><label>Ответственный</label><select id="assignee" required></select></div><div class="field"><label>Комментарий</label><textarea id="comment"></textarea></div><div class="two"><button type="button" class="btn btn-secondary" id="clearRequest">Очистить</button><button class="btn btn-primary" type="submit">Сохранить</button></div></form></div></div>
+
+  <div id="usersModal" class="modal"><div class="sheet"><div class="handle"></div><div class="row"><div><h2 style="margin:0">Пользователи</h2><div class="sub">Доступно только администратору.</div></div><button class="btn btn-secondary" data-close="usersModal">Закрыть</button></div><button id="newUserBtn" class="btn btn-primary" style="width:100%;margin:16px 0">+ Добавить пользователя</button><div id="usersList" class="admin-users"></div></div></div>
+
+  <div id="userModal" class="modal"><div class="sheet"><div class="handle"></div><div class="row"><h2 id="userFormTitle" style="margin:0">Новый пользователь</h2><button class="btn btn-secondary" data-close="userModal">Закрыть</button></div><form id="userForm"><input id="editUserId" type="hidden"><div class="field"><label>Логин</label><input id="newUserId" required pattern="[A-Za-z0-9_]+"></div><div class="field"><label>Имя</label><input id="newUserName" required></div><div class="field"><label id="passwordLabel">Пароль</label><input id="newUserPassword" type="password" minlength="4" required></div><div class="field"><label>Роль</label><select id="newUserRole"><option value="user">Пользователь</option><option value="admin">Администратор</option></select></div><div class="two"><button id="deleteUserBtn" type="button" class="btn btn-danger hidden">Удалить</button><button type="submit" class="btn btn-primary">Сохранить</button></div></form></div></div>
+
+<script>
+const S={auth:null,me:null,users:[],items:[],month:new Date(new Date().getFullYear(),new Date().getMonth(),1),selected:new Date().toISOString().slice(0,10),weekStart:null,view:'month'};
+const $=id=>document.getElementById(id);
+const statuses={new:'Новая',scheduled:'Назначена',work:'В работе',done:'Завершена',cancel:'Отменена'};
+function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function authHeaders(){return S.auth?{Authorization:'Basic '+btoa(S.auth.user+':'+S.auth.pass)}:{}}
+async function api(url,opt={}){const r=await fetch(url,{...opt,headers:{'Content-Type':'application/json',...authHeaders(),...(opt.headers||{})}});if(r.status===401){logout(false);throw new Error('Нужно войти заново')}const body=await r.text();let data={};try{data=body?JSON.parse(body):{}}catch{data={detail:body}}if(!r.ok)throw new Error(data.detail||'Ошибка запроса');return data}
+function dateKey(v){return String(v).slice(0,10)}
+function money(v){return new Intl.NumberFormat('ru-RU').format(Number(v||0))+' ₽'}
+function dt(v){return new Intl.DateTimeFormat('ru-RU',{dateStyle:'short',timeStyle:'short'}).format(new Date(v))}
+function labelDate(v){return new Intl.DateTimeFormat('ru-RU',{weekday:'long',day:'numeric',month:'long'}).format(new Date(v+'T00:00:00'))}
+function theme(){const now=document.documentElement.dataset.theme||'light';document.documentElement.dataset.theme=now==='dark'?'light':'dark';$('themeBtn').textContent=document.documentElement.dataset.theme==='dark'?'☀️':'🌙'}
+function openModal(id){$(id).classList.add('open');document.body.style.overflow='hidden'}function closeModal(id){$(id).classList.remove('open');document.body.style.overflow=''}
+function renderUsersOptions(){const opts=S.users.map(u=>`<option value="${esc(u.id)}">${esc(u.name)}</option>`).join('');$('assignee').innerHTML=opts;$('assigneeFilter').innerHTML='<option value="all">Все мастера</option>'+opts;}
+function renderStats(){const today=new Date().toISOString().slice(0,10),done=S.items.filter(x=>x.status==='done');$('statTotal').textContent=S.items.length;$('statToday').textContent=S.items.filter(x=>dateKey(x.visit_date)===today).length;$('statScheduled').textContent=S.items.filter(x=>x.status==='scheduled').length;$('statDone').textContent=done.length;$('statRevenue').textContent=money(done.reduce((a,x)=>a+Number(x.price||0),0));}
+function getWeekStart(d){const date=new Date(d),day=(date.getDay()+6)%7;date.setDate(date.getDate()-day);return date}
+function renderCalendar(){const m=S.month,start=new Date(m.getFullYear(),m.getMonth(),1),weekday=(start.getDay()+6)%7,gridStart=new Date(start);gridStart.setDate(start.getDate()-weekday);const by={};S.items.forEach(x=>{const k=dateKey(x.visit_date);(by[k]??=[]).push(x)});$('monthLabel').textContent=new Intl.DateTimeFormat('ru-RU',{month:'long',year:'numeric'}).format(m);$('calendar').innerHTML='';for(let i=0;i<42;i++){const d=new Date(gridStart);d.setDate(gridStart.getDate()+i);const k=d.toISOString().slice(0,10),list=by[k]||[];const b=document.createElement('button');b.type='button';b.className='day'+(d.getMonth()!==m.getMonth()?' other':'')+(list.length?' has':'')+(k===S.selected?' active':'');b.innerHTML=`<div class="dhead"><span>${d.getDate()}</span><span>${list.length||''}</span></div>${list.slice(0,2).map(x=>`<div class="dot">${esc(x.client)}</div>`).join('')}`;b.onclick=()=>{S.selected=k;$('dateFilter').value=k;renderCalendar();renderRequests();if(S.view!=='month')switchView('month')};$('calendar').appendChild(b)}}
+function renderWeek(){const start=getWeekStart(S.selected),end=new Date(start);end.setDate(start.getDate()+7);$('weekLabel').textContent=`${start.getDate()}-${end.getDate()} ${new Intl.DateTimeFormat('ru-RU',{month:'long'}).format(start)}`;$('weekGrid').innerHTML='';const by={};S.items.forEach(x=>{(by[dateKey(x.visit_date)]??=[]).push(x)});for(let i=0;i<7;i++){const d=new Date(start);d.setDate(start.getDate()+i);const k=d.toISOString().slice(0,10),list=(by[k]||[]).sort((a,b)=>a.visit_date.localeCompare(b.visit_date)),today=dateKey(new Date())===k;const col=document.createElement('div');col.className='week-col';col.innerHTML=`<div class="week-head${today?' today':''}">${new Intl.DateTimeFormat('ru-RU',{weekday:'short',day:'numeric'}).format(d)}</div><div class="week-body">${list.map(x=>`<div class="week-card" onclick="editRequest(${x.id})"><b>${esc(x.client)}</b><small>${dt(x.visit_date)}</small><small>${esc(x.address)}</small><span class="badge s-${x.status}" style="margin-top:6px;display:inline-block">${statuses[x.status]}</span></div>`).join('')}</div>`;$('weekGrid').appendChild(col)}}
+function renderDay(){const d=new Date(S.selected);$('dayLabel').textContent=labelDate(S.selected);const list=S.items.filter(x=>dateKey(x.visit_date)===S.selected).sort((a,b)=>a.visit_date.localeCompare(b.visit_date));$('dayList').innerHTML=list.length?list.map(x=>`<div class="day-card"><div class="top"><div><div class="time">${dt(x.visit_date)}</div><div class="client">${esc(x.client)}</div></div><span class="badge s-${x.status}">${statuses[x.status]}</span></div><div class="meta"><div>📍 ${esc(x.address)}</div><div>📞 <a href="tel:${esc(x.phone)}">${esc(x.phone)}</a></div><div>👤 ${esc(x.assignee_name||x.assignee)}</div><div>💰 ${money(x.price)}</div></div><div class="two" style="margin-top:10px"><button class="btn btn-secondary" onclick="editRequest(${x.id})">Изменить</button><button class="btn btn-danger" onclick="removeRequest(${x.id})">Удалить</button></div></div>`).join(''):'<div class="empty">На этот день заявок нет.</div>'}
+function filtered(){const q=$('search').value.trim().toLowerCase(),st=$('statusFilter').value,as=$('assigneeFilter').value,day=$('dateFilter').value||S.selected;return S.items.filter(x=>{const text=[x.client,x.address,x.phone,x.comment,x.assignee_name].join(' ').toLowerCase();return(!q||text.includes(q))&&(st==='all'||x.status===st)&&(as==='all'||x.assignee===as)&&(!day||dateKey(x.visit_date)===day)}).sort((a,b)=>a.visit_date.localeCompare(b.visit_date))}
+function renderRequests(){$('dateTitle').textContent='Заявки на '+labelDate($('dateFilter').value||S.selected);const rows=filtered();$('requests').innerHTML=rows.length?rows.map(x=>`<article class="request"><div class="row"><div><div class="name">${esc(x.client)}</div><div class="muted">${dt(x.visit_date)}</div></div><span class="badge s-${x.status}">${statuses[x.status]}</span></div><div class="meta"><div>📍 ${esc(x.address)}</div><div>📞 <a href="tel:${esc(x.phone)}">${esc(x.phone)}</a></div><div>👤 ${esc(x.assignee_name||x.assignee)}</div><div>💰 ${money(x.price)}</div>${x.comment?`<div>📝 ${esc(x.comment)}</div>`:''}</div><div class="two"><button class="btn btn-secondary" onclick="editRequest(${x.id})">Изменить</button><button class="btn btn-danger" onclick="removeRequest(${x.id})">Удалить</button></div></article>`).join(''):'<div class="empty">На выбранный день заявок нет.</div>'}
+function switchView(v){S.view=v;document.querySelectorAll('.view-switch .btn').forEach(b=>b.classList.toggle('active',b.dataset.view===v));$('monthView').classList.toggle('hidden',v!=='month');$('weekView').classList.toggle('hidden',v!=='week');$('dayView').classList.toggle('hidden',v!=='day');if(v==='week')renderWeek();if(v==='day')renderDay()}
+async function load(){S.users=await api('/api/users');renderUsersOptions();S.items=await api('/api/requests');renderStats();renderCalendar();renderRequests()}
+async function login(){S.auth={user:$('loginUser').value.trim(),pass:$('loginPass').value};S.me=await api('/api/me');if($('rememberMe').checked)localStorage.setItem('master_crm_auth',JSON.stringify(S.auth));else localStorage.removeItem('master_crm_auth');$('sessionPill').textContent='Вошёл: '+S.me.name;$('adminBtn').classList.toggle('hidden',S.me.role!=='admin');$('loginView').classList.add('hidden');$('appView').classList.remove('hidden');await load();clearRequest()}
+function logout(show=true){S.auth=null;S.me=null;localStorage.removeItem('master_crm_auth');$('appView').classList.add('hidden');$('loginView').classList.remove('hidden');if(show)alert('Вы вышли из системы')}
+function clearRequest(){$('requestForm').reset();$('requestId').value='';$('requestFormTitle').textContent='Новая заявка';$('requestStatus').value='new';$('price').value='0';const d=new Date(S.selected+'T10:00:00');$('visitDate').value=d.toISOString().slice(0,16);if(S.auth)$('assignee').value=S.auth.user}
+function newRequest(){clearRequest();openModal('requestModal')}
+function editRequest(id){const x=S.items.find(i=>i.id===id);if(!x)return;$('requestFormTitle').textContent='Редактирование заявки';$('requestId').value=x.id;$('client').value=x.client;$('visitDate').value=x.visit_date.slice(0,16);$('address').value=x.address;$('phone').value=x.phone;$('requestStatus').value=x.status;$('price').value=x.price;$('assignee').value=x.assignee;$('comment').value=x.comment||'';openModal('requestModal')}
+async function removeRequest(id){if(!confirm('Удалить заявку?'))return;try{await api('/api/requests/'+id,{method:'DELETE'});await load();if(S.view==='week')renderWeek();if(S.view==='day')renderDay()}catch(e){alert(e.message)}}
+async function saveRequest(e){e.preventDefault();const p={client:$('client').value.trim(),visit_date:$('visitDate').value,address:$('address').value.trim(),phone:$('phone').value.trim(),status:$('requestStatus').value,price:Number($('price').value||0),comment:$('comment').value.trim(),assignee:$('assignee').value};try{const id=$('requestId').value;await api(id?'/api/requests/'+id:'/api/requests',{method:id?'PUT':'POST',body:JSON.stringify(p)});S.selected=p.visit_date.slice(0,10);$('dateFilter').value=S.selected;closeModal('requestModal');await load();if(S.view==='week')renderWeek();if(S.view==='day')renderDay()}catch(e){alert('Не удалось сохранить: '+e.message)}}
+function openUsers(){renderUsers();openModal('usersModal')}
+function renderUsers(){$('usersList').innerHTML=S.users.map(u=>`<div class="user"><div><b>${esc(u.name)}</b><br><small>${esc(u.id)} · ${u.role==='admin'?'Администратор':'Пользователь'}</small></div><button class="btn btn-secondary" onclick="editUser('${esc(u.id)}')">Изменить</button></div>`).join('')}
+function newUser(){$('userForm').reset();$('editUserId').value='';$('newUserId').disabled=false;$('newUserPassword').required=true;$('passwordLabel').textContent='Пароль';$('userFormTitle').textContent='Новый пользователь';$('deleteUserBtn').classList.add('hidden');openModal('userModal')}
+function editUser(id){const u=S.users.find(x=>x.id===id);if(!u)return;$('editUserId').value=u.id;$('newUserId').value=u.id;$('newUserId').disabled=true;$('newUserName').value=u.name;$('newUserPassword').value='';$('newUserPassword').required=false;$('passwordLabel').textContent='Новый пароль (оставь пустым, чтобы не менять)';$('newUserRole').value=u.role;$('userFormTitle').textContent='Редактирование пользователя';$('deleteUserBtn').classList.toggle('hidden',u.id===S.me.id);openModal('userModal')}
+async function saveUser(e){e.preventDefault();const old=$('editUserId').value,p={id:$('newUserId').value.trim(),name:$('newUserName').value.trim(),password:$('newUserPassword').value,role:$('newUserRole').value};if(old&&!p.password)delete p.password;try{await api(old?'/api/users/'+old:'/api/users',{method:old?'PUT':'POST',body:JSON.stringify(p)});await load();renderUsers();closeModal('userModal')}catch(e){alert('Не удалось сохранить: '+e.message)}}
+async function removeUser(){const id=$('editUserId').value;if(!id||!confirm('Удалить пользователя '+id+'?'))return;try{await api('/api/users/'+id,{method:'DELETE'});await load();renderUsers();closeModal('userModal')}catch(e){alert('Не удалось удалить: '+e.message)}}
+$('loginBtn').onclick=()=>login().catch(e=>alert(e.message||'Неверный логин или пароль'));$('loginPass').addEventListener('keydown',e=>{if(e.key==='Enter')login().catch(x=>alert(x.message))});$('logoutBtn').onclick=()=>logout();$('themeBtn').onclick=theme;$('adminBtn').onclick=openUsers;$('prevMonth').onclick=()=>{S.month=new Date(S.month.getFullYear(),S.month.getMonth()-1,1);renderCalendar()};$('nextMonth').onclick=()=>{S.month=new Date(S.month.getFullYear(),S.month.getMonth()+1,1);renderCalendar()};$('prevWeek').onclick=()=>{S.selected=new Date(new Date(S.selected).setDate(new Date(S.selected).getDate()-7));S.month=new Date(S.selected);renderWeek()};$('nextWeek').onclick=()=>{S.selected=new Date(new Date(S.selected).setDate(new Date(S.selected).getDate()+7));S.month=new Date(S.selected);renderWeek()};$('prevDay').onclick=()=>{S.selected=new Date(new Date(S.selected).setDate(new Date(S.selected).getDate()-1));S.month=new Date(S.selected);renderDay()};$('nextDay').onclick=()=>{S.selected=new Date(new Date(S.selected).setDate(new Date(S.selected).getDate()+1));S.month=new Date(S.selected);renderDay()};$('dateFilter').value=S.selected;$('dateFilter').onchange=()=>{S.selected=$('dateFilter').value;S.month=new Date(S.selected);renderCalendar();renderRequests();if(S.view==='week')renderWeek();if(S.view==='day')renderDay()};['search','statusFilter','assigneeFilter'].forEach(id=>$(id).addEventListener('input',renderRequests));document.querySelectorAll('.view-switch .btn').forEach(b=>b.onclick=()=>switchView(b.dataset.view));$('newRequestFab').onclick=newRequest;$('newRequestTop').onclick=newRequest;$('newRequestSide')?.onclick=newRequest;$('clearRequest').onclick=clearRequest;$('requestForm').onsubmit=saveRequest;$('newUserBtn').onclick=newUser;$('userForm').onsubmit=saveUser;$('deleteUserBtn').onclick=removeUser;document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>closeModal(b.dataset.close));document.querySelectorAll('.modal').forEach(m=>m.addEventListener('click',e=>{if(e.target===m)closeModal(m.id)}));document.documentElement.dataset.theme=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';$('themeBtn').textContent=document.documentElement.dataset.theme==='dark'?'☀️':'🌙';try{const saved=JSON.parse(localStorage.getItem('master_crm_auth'));if(saved?.user&&saved?.pass){$('loginUser').value=saved.user;$('loginPass').value=saved.pass;$('rememberMe').checked=true;setTimeout(()=>login().catch(()=>localStorage.removeItem('master_crm_auth')),100)}}catch(e){}
+</script>
+</body>
+</html>'''
