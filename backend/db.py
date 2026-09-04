@@ -33,7 +33,8 @@ def init_db() -> None:
                 password_hash TEXT NOT NULL,
                 name TEXT NOT NULL,
                 role TEXT NOT NULL DEFAULT 'user',
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                theme TEXT NOT NULL DEFAULT 'light'
             )
             """
         )
@@ -77,6 +78,12 @@ def init_db() -> None:
         conn.execute("UPDATE requests SET updated_at = ? WHERE updated_at IS NULL OR updated_at = ''", (now,))
         conn.execute("UPDATE requests SET source = 'unknown' WHERE source IS NULL OR source = ''")
         conn.execute("UPDATE requests SET contact_method = '' WHERE contact_method IS NULL")
+
+        # Миграция: добавляем поле theme в users
+        user_columns = table_columns(conn, "users")
+        if "theme" not in user_columns:
+            conn.execute("ALTER TABLE users ADD COLUMN theme TEXT NOT NULL DEFAULT 'light'")
+
         conn.commit()
     finally:
         conn.close()

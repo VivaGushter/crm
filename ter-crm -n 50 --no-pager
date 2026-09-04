@@ -1,0 +1,21 @@
+[0;1;32m●[0m master-crm.service - Master CRM FastAPI service
+     Loaded: loaded (]8;;file://cv7673435.novalocal/etc/systemd/system/master-crm.service\/etc/systemd/system/master-crm.service]8;;\; [0;1;32menabled[0m; preset: [0;1;32menabled[0m)
+     Active: [0;1;32mactive (running)[0m since Tue 2026-09-01 06:07:35 UTC; 3 days ago
+ Invocation: e4cc205780854db88119a2f9aaaca1b9
+   Main PID: 52666 (uvicorn)
+      Tasks: 7[0;38:5:245m (limit: 519)[0m
+     Memory: 40.7M (peak: 40.9M)
+        CPU: 8min 2.663s
+     CGroup: /system.slice/master-crm.service
+             └─[0;38:5:245m52666 /opt/master-crm/venv/bin/python3 /opt/master-crm/venv/bin/uvicorn app:app --host 127.0.0.1 --port 8000[0m
+
+Sep 04 06:01:13 cv7673435.novalocal uvicorn[52666]: INFO:     179.43.186.241:0 - "GET /mapi/ HTTP/1.1" 404 Not Found
+Sep 04 06:01:13 cv7673435.novalocal uvicorn[52666]: INFO:     179.43.186.241:0 - "GET /rpc/ HTTP/1.1" 404 Not Found
+Sep 04 07:44:33 cv7673435.novalocal uvicorn[52666]: INFO:     40.119.43.218:0 - "GET /owa/auth/x.js HTTP/1.1" 404 Not Found
+Sep 04 07:56:29 cv7673435.novalocal uvicorn[52666]: INFO:     54.90.159.174:0 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+Sep 04 07:59:02 cv7673435.novalocal uvicorn[52666]: INFO:     94.154.43.196:0 - "GET / HTTP/1.1" 200 OK
+Sep 04 07:59:03 cv7673435.novalocal uvicorn[52666]: INFO:     94.154.43.196:0 - "PROPFIND / HTTP/1.1" 405 Method Not Allowed
+Sep 04 08:01:08 cv7673435.novalocal uvicorn[52666]: INFO:     3.83.162.99:0 - "GET /robots.txt HTTP/1.1" 404 Not Found
+Sep 04 08:01:12 cv7673435.novalocal uvicorn[52666]: INFO:     34.203.202.222:0 - "GET / HTTP/1.1" 200 OK
+Sep 04 08:57:16 cv7673435.novalocal uvicorn[52666]: INFO:     62.113.113.43:0 - "GET / HTTP/1.1" 200 OK
+Sep 04 08:57:16 cv7673435.novalocal uvicorn[52666]: INFO:     62.113.113.43:0 - "GET / HTTP/1.1" 200 OK

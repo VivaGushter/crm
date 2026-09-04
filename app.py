@@ -5,7 +5,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.db import init_db
-from backend.routes import reports, requests, users
+from backend.routes import reports, requests, users, settings
 from backend.auth import get_current_user
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -21,6 +21,7 @@ app = FastAPI(title="Master CRM")
 app.include_router(reports.router)
 app.include_router(requests.router)
 app.include_router(users.router)
+app.include_router(settings.router)
 
 
 @app.get("/")
@@ -36,10 +37,26 @@ def index():
 
 @app.get("/api/me")
 def me(current_user: dict = Depends(get_current_user)):
-   return current_user
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT id, name, role, theme FROM users WHERE id = ?", (current_user["id"],)
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "User not found")
+        return dict(row)
+    finally:
+        conn.close()
+
+
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 @app.on_event("startup")
 def startup():
     init_db()
+
+
+def get_db():
+    from backend.db import get_db as _get_db
+    return _get_db()
