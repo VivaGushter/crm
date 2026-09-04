@@ -1,25 +1,30 @@
-# Базы данных
-*.db
-*.sqlite
-*.sqlite3
-db.sqlite3
-
-# Логи
-*.log
-logs/
-
-# Кэш, временные файлы
+# Python
 __pycache__/
-*.pyc
-.pytest_cache/
-.coverage
-htmlcov/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
-# Окружение
+# Virtual environments
 venv/
 env/
-.env
-.env.local
+ENV/
+.venv
 
 # IDE
 .vscode/
@@ -28,6 +33,34 @@ env/
 *.swo
 *~
 
-# Файлы с паролями/токенами
-config.local.py
-secrets.py
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+data/*.db
+data/*.sqlite
+
+# Backups
+*.backup
+*.backup-*
+*.bak
+backups/
+
+# Archives
+*.tar.gz
+*.zip
+*.rar
+
+# Secrets
+.env
+.env.*
+*.key
+*.pem
