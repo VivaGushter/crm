@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Прайс-лист | CRM</title>
+  <link rel="preconnect" href="https://api.fontshare.com">
+  <link href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700,900&f[]=general-sans@400,500,600,700&display=swap" rel="stylesheet">
+  <style>
+    :root, [data-theme="light"] { --bg:#f7f6f2; --surface:#fbfbf9; --surface2:#f3f0ec; --border:#d4d1ca; --text:#28251d; --muted:#706d67; --inverse:#f9f8f4; --primary:#01696f; --primary-hover:#0c4e54; --primary-soft:#d7e3df; --success:#437a22; --warning:#a86000; --danger:#a13544; --blue:#006494; --purple:#7a39bb; --radius:14px; --radius-sm:9px; --shadow:0 6px 20px rgba(40,37,29,.08); }
+    [data-theme="dark"] { --bg:#171614; --surface:#1c1b19; --surface2:#272421; --border:#393836; --text:#eceae5; --muted:#b2aea8; --inverse:#141311; --primary:#4f98a3; --primary-hover:#227f8b; --primary-soft:#2b3938; --success:#6daa45; --warning:#edb336; --danger:#dd6974; --blue:#5591c7; --purple:#a86fdf; --shadow:0 8px 28px rgba(0,0,0,.3); }
+    *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 'General Sans',Arial,sans-serif} button,input,textarea,select{font:inherit;color:inherit} button{cursor:pointer} input,textarea,select{width:100%;min-height:44px;padding:10px 12px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--surface);font-size:15px}
+    .hidden{display:none!important}.shell{max-width:1200px;margin:auto;padding:16px 16px 80px}.top{display:flex;gap:12px;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap}.title{margin:0;font:800 28px/1.1 'Satoshi',Arial,sans-serif}.sub{color:var(--muted)}.actions{display:flex;gap:8px;flex-wrap:wrap}.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px}.btn{min-height:42px;padding:8px 14px;border:1px solid transparent;border-radius:var(--radius-sm);font-weight:700;background:transparent}.btn-primary{background:var(--primary);color:var(--inverse)}.btn-primary:hover{background:var(--primary-hover)}.btn-secondary{border-color:var(--border);background:var(--surface)}.btn-danger{border-color:color-mix(in srgb,var(--danger) 38%,transparent);color:var(--danger)}.btn-sm{min-height:34px;padding:4px 10px;font-size:14px}
+    .category{margin-bottom:12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm)}.cat-head{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;cursor:pointer;border-bottom:2px solid var(--primary)}.cat-head:hover{background:var(--surface2)}.cat-head h3{margin:0;font-size:18px;display:flex;align-items:center;gap:8px}.cat-head h3::before{content:'▼';font-size:12px;transition:transform .2s}.cat-head.collapsed h3::before{transform:rotate(-90deg)}.cat-actions{display:flex;gap:6px}.cat-items{padding:0 14px 14px;transition:max-height .25s ease,opacity .25s ease;max-height:2000px;opacity:1}.cat-head.collapsed+.cat-items{max-height:0;padding-top:0;padding-bottom:0;overflow:hidden;opacity:0}.item{display:grid;grid-template-columns:1fr auto;grid-template-areas:"name actions""price actions";gap:4px 12px;align-items:center;padding:12px;border:1px solid var(--border);border-radius:var(--radius-sm);margin-top:8px;background:var(--bg)}.item-name{grid-area:name;font-weight:700;overflow-wrap:anywhere}.item-price{grid-area:price;color:var(--muted)}.item-header{display:none}.item-actions{grid-area:actions;display:flex;gap:6px;align-self:center}
+    .modal{position:fixed;inset:0;background:rgba(0,0,0,.38);display:none;align-items:center;justify-content:center;z-index:100}.modal.open{display:flex}.sheet{width:min(100%,500px);background:var(--bg);border-radius:var(--radius);padding:20px;box-shadow:var(--shadow)}.sheet h3{margin:0 0 16px}.field{margin-bottom:14px}.field label{display:block;margin-bottom:6px;font-weight:700;font-size:14px}
+    .empty{padding:24px;text-align:center;color:var(--muted);border:1px dashed var(--border);border-radius:var(--radius)}
+    .edit-mode .item{padding-right:8px}
+    @media(min-width:701px){.item{grid-template-columns:2fr 1fr 80px;grid-template-areas:none;gap:10px;padding:10px}.item-name{display:none}.item-header{display:block;background:var(--surface2)}.item-price{color:inherit}}
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="top">
+      <div><h1 class="title">📋 Прайс-лист</h1><div class="sub">Категории и позиции. Редактирование доступно менеджеру и администратору.</div></div>
+      <div class="actions">
+        <button class="btn btn-secondary" onclick="window.location.href='/'">← На главную</button>
+        <button class="btn btn-secondary" id="exportBtn">📥 Скачать CSV</button>
+        <button class="btn btn-primary hidden" id="toggleEditBtn" onclick="toggleEditMode()">✏️ Редактировать</button>
+        <button class="btn btn-primary hidden" id="addCatBtn" onclick="openAddCategory()">+ Категория</button>
+      </div>
+    </header>
+    
+    <div id="priceList"></div>
+  </div>
+
+  <!-- Модалка: Категория -->
+  <div id="categoryModal" class="modal">
+    <div class="sheet">
+      <h3 id="catModalTitle">Категория</h3>
+      <form id="categoryForm">
+        <input type="hidden" id="catId">
+        <div class="field"><label>Название</label><input id="catName" required></div>
+        <div class="field"><label>Порядок</label><input id="catOrder" type="number" value="0"></div>
+        <div style="display:flex;gap:10px">
+          <button type="button" class="btn btn-secondary" onclick="closeModal('categoryModal')">Отмена</button>
+          <button type="submit" class="btn btn-primary">Сохранить</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Модалка: Позиция -->
+  <div id="itemModal" class="modal">
+    <div class="sheet">
+      <h3 id="itemModalTitle">Позиция</h3>
+      <form id="itemForm">
+        <input type="hidden" id="itemId">
+        <input type="hidden" id="itemCatId">
+        <div class="field"><label>Название</label><input id="itemName" required></div>
+        <div class="field"><label>Цена (можно диапазон: 1000-3000)</label><input id="itemPrice" type="text" placeholder="1000 или 1000-3000"></div>
+        <div class="field"><label>Ед. измерения</label><select id="itemUnit"><option value="шт">шт</option><option value="м">м</option><option value="м/пог">м/пог</option><option value="м2">м2</option></select></div>
+        <div class="field"><label>Порядок</label><input id="itemOrder" type="number" value="0"></div>
+        <div style="display:flex;gap:10px">
+          <button type="button" class="btn btn-secondary" onclick="closeModal('itemModal')">Отмена</button>
+          <button type="submit" class="btn btn-primary">Сохранить</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+<script>
+const $=id=>document.getElementById(id);
+let prices=[],editMode=false,canEdit=false,auth=null,userRole=null,collapsedCats=new Set();
+function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function formatPrice(v){const s=String(v??'').trim();if(!s)return'0 ₽';if(s.includes('-'))return s+' ₽';return new Intl.NumberFormat('ru-RU').format(Number(s)||0)+' ₽'}
+function authHeaders(){return auth?{Authorization:'Basic '+btoa(auth.user+':'+auth.pass)}:{}}
+async function api(url,opt={}){const r=await fetch(url,{...opt,headers:{'Content-Type':'application/json',...authHeaders()}});if(!r.ok){const t=await r.text();throw new Error(t||'Ошибка')}return r.json()}
+async function load(){try{prices=await api('/api/prices');prices.forEach(c=>collapsedCats.add(c.id));render()}catch(e){alert('Ошибка загрузки: '+e.message)}}
+async function checkPermissions(){const saved=localStorage.getItem('master_crm_auth');if(saved){try{auth=JSON.parse(saved);const me=await api('/api/me');userRole=me.role;const canPrice=me.role==='admin'||(me.role==='manager'&&me.can_edit_price);if(canPrice){canEdit=true;$('toggleEditBtn').classList.remove('hidden');$('addCatBtn').classList.remove('hidden')}}catch(e){console.error(e)}}}
+function toggleCategory(catId){collapsedCats.has(catId)?collapsedCats.delete(catId):collapsedCats.add(catId);render()}
+function render(){const list=$('priceList');if(!prices.length){list.innerHTML='<div class="empty">Прайс пуст. Добавьте первую категорию.</div>';return}list.innerHTML=prices.map((cat)=>{const isCollapsed=collapsedCats.has(cat.id);return`<div class="category"><div class="cat-head ${isCollapsed?'collapsed':''}" onclick="toggleCategory(${cat.id})"><h3>${esc(cat.name)}</h3><div class="cat-actions" onclick="event.stopPropagation()">${editMode&&canEdit?`<button class="btn btn-sm btn-secondary" onclick="editCategory(${cat.id})">✏️</button><button class="btn btn-sm btn-danger" onclick="deleteCategory(${cat.id})">🗑️</button>`:''}<button class="btn btn-sm btn-primary" onclick="openAddItem(${cat.id})">+ Позиция</button></div></div><div class="cat-items">${cat.items&&cat.items.length?cat.items.map(item=>`<div class="item"><div class="item-name">${esc(item.name||'Без названия')}</div><div class="item-header">${esc(item.name)}</div><div class="item-price">${formatPrice(item.price)} / ${esc(item.unit||'шт')}</div><div class="item-actions">${editMode&&canEdit?`<button class="btn btn-sm btn-secondary" onclick="editItem(${item.id})">✏️</button><button class="btn btn-sm btn-danger" onclick="deleteItem(${item.id})">🗑️</button>`:''}</div></div>`).join(''):'<div class="empty" style="margin:8px 0">В категории нет позиций</div>'}</div></div>`}).join('')}
+function toggleEditMode(){if(!canEdit)return;editMode=!editMode;document.body.classList.toggle('edit-mode',editMode);$('toggleEditBtn').textContent=editMode?'💾 Готово':'✏️ Редактировать';render()}
+function openModal(id){$(id).classList.add('open')}function closeModal(id){$(id).classList.remove('open')}
+function openAddCategory(){$('categoryForm').reset();$('catId').value='';$('catModalTitle').textContent='Новая категория';openModal('categoryModal')}
+function editCategory(id){const cat=prices.find(c=>c.id===id);if(!cat)return;$('catId').value=cat.id;$('catName').value=cat.name;$('catOrder').value=cat.sort_order;$('catModalTitle').textContent='Редактировать категорию';openModal('categoryModal')}
+async function saveCategory(e){e.preventDefault();const payload={name:$('catName').value.trim(),sort_order:Number($('catOrder').value)||0};try{const id=$('catId').value;await api(id?`/api/prices/categories/${id}`:'/api/prices/categories',{method:id?'PUT':'POST',body:JSON.stringify(payload)});closeModal('categoryModal');await load()}catch(e){alert('Ошибка: '+e.message)}}
+async function deleteCategory(id){if(!confirm('Удалить категорию и все позиции в ней?'))return;try{await api(`/api/prices/categories/${id}`,{method:'DELETE'});await load()}catch(e){alert('Ошибка: '+e.message)}}
+function openAddItem(catId){$('itemForm').reset();$('itemId').value='';$('itemCatId').value=catId;$('itemModalTitle').textContent='Новая позиция';openModal('itemModal')}
+function editItem(id){const item=findItem(id);if(!item)return;$('itemId').value=item.id;$('itemCatId').value=item.category_id;$('itemName').value=item.name;$('itemPrice').value=item.price;$('itemUnit').value=item.unit;$('itemOrder').value=item.sort_order;$('itemModalTitle').textContent='Редактировать позицию';openModal('itemModal')}
+function findItem(id){for(const cat of prices){const item=cat.items.find(i=>i.id===id);if(item)return item}return null}
+async function saveItem(e){e.preventDefault();const payload={category_id:Number($('itemCatId').value),name:$('itemName').value.trim(),price:$('itemPrice').value.trim(),unit:$('itemUnit').value,sort_order:Number($('itemOrder').value)||0};try{const id=$('itemId').value;await api(id?`/api/prices/items/${id}`:'/api/prices/items',{method:id?'PUT':'POST',body:JSON.stringify(payload)});closeModal('itemModal');await load()}catch(e){alert('Ошибка: '+e.message)}}
+async function deleteItem(id){if(!confirm('Удалить позицию?'))return;try{await api(`/api/prices/items/${id}`,{method:'DELETE'});await load()}catch(e){alert('Ошибка: '+e.message)}}
+async function exportPrices(){try{const data=await api('/api/prices/export');const blob=new Blob([data.csv],{type:'text/csv'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='price.csv';a.click()}catch(e){alert('Ошибка: '+e.message)}}
+$('categoryForm').onsubmit=saveCategory;$('itemForm').onsubmit=saveItem;$('exportBtn').onclick=exportPrices;document.querySelectorAll('.modal').forEach(m=>m.addEventListener('click',e=>{if(e.target===m)closeModal(m.id)}));try{const saved=localStorage.getItem('master_crm_auth');if(saved){auth=JSON.parse(saved)}}catch(e){}try{const theme=localStorage.getItem('master_crm_theme')||matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.dataset.theme=theme}catch(e){}load();checkPermissions();
+</script>
+</body>
+</html>

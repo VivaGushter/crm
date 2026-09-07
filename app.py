@@ -5,7 +5,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.db import init_db
-from backend.routes import reports, requests, users, settings
+from backend.routes import reports, requests, users, settings, prices, admin
 from backend.auth import get_current_user
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -22,16 +22,31 @@ app.include_router(reports.router)
 app.include_router(requests.router)
 app.include_router(users.router)
 app.include_router(settings.router)
+app.include_router(prices.router)
+app.include_router(admin.router)
 
 
 @app.get("/")
 def index():
     path = os.path.join(FRONTEND_DIR, "index.html")
     if not os.path.isfile(path):
-        raise HTTPException(
-            status_code=404,
-            detail="frontend/index.html not found",
-        )
+        raise HTTPException(status_code=404, detail="frontend/index.html not found")
+    return FileResponse(path, media_type="text/html")
+
+
+@app.get("/price")
+def price_page():
+    path = os.path.join(FRONTEND_DIR, "price.html")
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="frontend/price.html not found")
+    return FileResponse(path, media_type="text/html")
+
+
+@app.get("/admin")
+def admin_page():
+    path = os.path.join(FRONTEND_DIR, "admin.html")
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="frontend/admin.html not found")
     return FileResponse(path, media_type="text/html")
 
 
@@ -41,7 +56,8 @@ def me(current_user: dict = Depends(get_current_user)):
     conn = get_db()
     try:
         row = conn.execute(
-            "SELECT id, name, role, theme FROM users WHERE id = ?", (current_user["id"],)
+            "SELECT id, name, role, theme, can_edit_price, can_edit_requests, can_delete_requests FROM users WHERE id = ?",
+            (current_user["id"],)
         ).fetchone()
         if not row:
             raise HTTPException(404, "User not found")

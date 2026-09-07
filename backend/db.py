@@ -26,7 +26,7 @@ def now_iso() -> str:
 def init_db() -> None:
     conn = get_db()
     try:
-        # Таблица пользователей с ролью manager
+        # Таблица пользователей с полями прав
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS users (
@@ -35,7 +35,10 @@ def init_db() -> None:
                 name TEXT NOT NULL,
                 role TEXT NOT NULL DEFAULT 'user',
                 created_at TEXT NOT NULL,
-                theme TEXT NOT NULL DEFAULT 'light'
+                theme TEXT NOT NULL DEFAULT 'light',
+                can_edit_price INTEGER NOT NULL DEFAULT 0,
+                can_edit_requests INTEGER NOT NULL DEFAULT 1,
+                can_delete_requests INTEGER NOT NULL DEFAULT 0
             )
             """
         )
@@ -78,8 +81,40 @@ def init_db() -> None:
         user_columns = table_columns(conn, "users")
         if "theme" not in user_columns:
             conn.execute("ALTER TABLE users ADD COLUMN theme TEXT NOT NULL DEFAULT 'light'")
+        if "can_edit_price" not in user_columns:
+            conn.execute("ALTER TABLE users ADD COLUMN can_edit_price INTEGER NOT NULL DEFAULT 0")
+        if "can_edit_requests" not in user_columns:
+            conn.execute("ALTER TABLE users ADD COLUMN can_edit_requests INTEGER NOT NULL DEFAULT 1")
+        if "can_delete_requests" not in user_columns:
+            conn.execute("ALTER TABLE users ADD COLUMN can_delete_requests INTEGER NOT NULL DEFAULT 0")
 
-        # Аудит-лог
+        # Таблица категорий прайса
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS price_categories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                sort_order INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
+
+        # Таблица позиций прайса
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS price_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                category_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                price REAL NOT NULL DEFAULT 0,
+                unit TEXT NOT NULL DEFAULT 'шт',
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY (category_id) REFERENCES price_categories(id) ON DELETE CASCADE
+            )
+            """
+        )
+
+        # Таблица аудит-лога
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS audit_log (
