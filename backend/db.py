@@ -1,145 +1,151 @@
 import sqlite3
-from datetime import datetime
+from contextlib import contextmanager
 
-from .config import DATA_DIR, DB_PATH
+DB_PATH = "data/crm.db"
 
-
-def get_db() -> sqlite3.Connection:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, timeout=5)
+@contextmanager
+def get_db():
+    conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON;")
-    conn.execute("PRAGMA journal_mode = WAL;")
-    conn.execute("PRAGMA synchronous = NORMAL;")
-    conn.execute("PRAGMA busy_timeout = 5000;")
-    return conn
-
-
-def table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
-    return {row["name"] for row in conn.execute(f"PRAGMA table_info({table_name})")}
-
-
-def now_iso() -> str:
-    return datetime.now().replace(second=0, microsecond=0).isoformat(timespec="minutes")
-
-
-def init_db() -> None:
-    conn = get_db()
     try:
-        # Таблица пользователей с полями прав
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS users (
-                id TEXT PRIMARY KEY,
-                password_hash TEXT NOT NULL,
-                name TEXT NOT NULL,
-                role TEXT NOT NULL DEFAULT 'user',
-                created_at TEXT NOT NULL,
-                theme TEXT NOT NULL DEFAULT 'light',
-                can_edit_price INTEGER NOT NULL DEFAULT 0,
-                can_edit_requests INTEGER NOT NULL DEFAULT 1,
-                can_delete_requests INTEGER NOT NULL DEFAULT 0
-            )
-            """
-        )
+        yield conn
+    finally:
+        conn.close()
+
+def init_db():
+    """Initialize database with all required tables and migrations."""
+    with get_db() as conn:
+        cursor = conn.cursor()
         
-        # Таблица заявок
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS requests (
+        # Users table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                client TEXT NOT NULL,
-                visit_date TEXT NOT NULL,
-                address TEXT NOT NULL,
-                phone TEXT NOT NULL,
-                status TEXT NOT NULL,
-                price REAL NOT NULL DEFAULT 0,
-                comment TEXT,
-                assignee TEXT NOT NULL,
-                created_by TEXT NOT NULL DEFAULT '',
-                updated_at TEXT NOT NULL DEFAULT '',
-                source TEXT NOT NULL DEFAULT 'unknown',
-                contact_method TEXT NOT NULL DEFAULT '',
-                FOREIGN KEY (assignee) REFERENCES users(id)
+                username TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'user',
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
             )
-            """
-        )
-
-        # Миграции для requests
-        columns = table_columns(conn, "requests")
-        migrations = {
-            "created_by": "ALTER TABLE requests ADD COLUMN created_by TEXT NOT NULL DEFAULT ''",
-            "updated_at": "ALTER TABLE requests ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''",
-            "source": "ALTER TABLE requests ADD COLUMN source TEXT NOT NULL DEFAULT 'unknown'",
-            "contact_method": "ALTER TABLE requests ADD COLUMN contact_method TEXT NOT NULL DEFAULT ''",
-        }
-        for column, sql in migrations.items():
-            if column not in columns:
-                conn.execute(sql)
-
-        # Миграции для users
-        user_columns = table_columns(conn, "users")
-        if "theme" not in user_columns:
-            conn.execute("ALTER TABLE users ADD COLUMN theme TEXT NOT NULL DEFAULT 'light'")
-        if "can_edit_price" not in user_columns:
-            conn.execute("ALTER TABLE users ADD COLUMN can_edit_price INTEGER NOT NULL DEFAULT 0")
-        if "can_edit_requests" not in user_columns:
-            conn.execute("ALTER TABLE users ADD COLUMN can_edit_requests INTEGER NOT NULL DEFAULT 1")
-        if "can_delete_requests" not in user_columns:
-            conn.execute("ALTER TABLE users ADD COLUMN can_delete_requests INTEGER NOT NULL DEFAULT 0")
-
-        # Таблица категорий прайса
-        conn.execute(
-            """
+        """)
+        
+        # Permissions table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS permissions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                permission TEXT NOT NULL,
+                granted_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                UNIQUE(user_id, permission)
+            )
+        """)
+        
+        # Price categories table
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS price_categories (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL UNIQUE,
-                sort_order INTEGER NOT NULL DEFAULT 0
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             )
-            """
-        )
-
-        # Таблица позиций прайса
-        conn.execute(
-            """
+        """)
+        
+        # Price items table
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS price_items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 category_id INTEGER NOT NULL,
                 name TEXT NOT NULL,
-                price REAL NOT NULL DEFAULT 0,
+                price TEXT NOT NULL,
                 unit TEXT NOT NULL DEFAULT 'шт',
+                is_active INTEGER NOT NULL DEFAULT 1,
                 sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                 FOREIGN KEY (category_id) REFERENCES price_categories(id) ON DELETE CASCADE
             )
-            """
-        )
-
-        # Таблица аудит-лога
-        conn.execute(
-            """
+        """)
+        
+        # Requests table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_name TEXT NOT NULL,
+                phone TEXT NOT NULL,
+                visit_date TEXT,
+                address TEXT,
+                status TEXT NOT NULL DEFAULT 'new',
+                price REAL,
+                notes TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        
+        # Audit log table
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS audit_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id TEXT NOT NULL,
+                user_id INTEGER,
                 action TEXT NOT NULL,
                 entity_type TEXT NOT NULL,
-                entity_id TEXT,
-                old_values TEXT,
-                new_values TEXT,
-                created_at TEXT NOT NULL
+                entity_id INTEGER,
+                details TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
             )
-            """
-        )
-
-        # Старые данные
-        now = now_iso()
-        conn.execute("UPDATE requests SET assignee = 'rus' WHERE assignee = 'master1'")
-        conn.execute("UPDATE requests SET assignee = 'Gushter' WHERE assignee = 'master2'")
-        conn.execute("UPDATE requests SET assignee = 'rus' WHERE assignee IS NULL OR assignee = ''")
-        conn.execute("UPDATE requests SET created_by = assignee WHERE created_by IS NULL OR created_by = ''")
-        conn.execute("UPDATE requests SET updated_at = ? WHERE updated_at IS NULL OR updated_at = ''", (now,))
-        conn.execute("UPDATE requests SET source = 'unknown' WHERE source IS NULL OR source = ''")
-        conn.execute("UPDATE requests SET contact_method = '' WHERE contact_method IS NULL")
-
+        """)
+        
+        # === v2.1 Calculator Migration ===
+        # Add financial fields to requests
+        cursor.execute("""
+            ALTER TABLE requests ADD COLUMN work_amount REAL NOT NULL DEFAULT 0
+        """)
+        cursor.execute("""
+            ALTER TABLE requests ADD COLUMN discount_type TEXT NOT NULL DEFAULT 'none'
+        """)
+        cursor.execute("""
+            ALTER TABLE requests ADD COLUMN discount_value REAL NOT NULL DEFAULT 0
+        """)
+        cursor.execute("""
+            ALTER TABLE requests ADD COLUMN discount_amount REAL NOT NULL DEFAULT 0
+        """)
+        cursor.execute("""
+            ALTER TABLE requests ADD COLUMN materials_amount REAL NOT NULL DEFAULT 0
+        """)
+        
+        # Create request_calculation_items table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS request_calculation_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                request_id INTEGER NOT NULL,
+                price_item_id INTEGER,
+                category_name_snapshot TEXT NOT NULL DEFAULT '',
+                name_snapshot TEXT NOT NULL,
+                unit_snapshot TEXT NOT NULL DEFAULT 'шт',
+                unit_price REAL NOT NULL DEFAULT 0,
+                quantity REAL NOT NULL DEFAULT 1,
+                line_total REAL NOT NULL DEFAULT 0,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (request_id) REFERENCES requests(id) ON DELETE CASCADE
+            )
+        """)
+        
         conn.commit()
-    finally:
-        conn.close()
+
+def create_default_user():
+    """Create default admin user if not exists."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM users WHERE username = ?", ("admin",))
+        if not cursor.fetchone():
+            import bcrypt
+            password_hash = bcrypt.hashpw("admin123".encode(), bcrypt.gensalt()).decode()
+            cursor.execute(
+                "INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
+                ("admin", password_hash, "admin")
+            )
+            conn.commit()
