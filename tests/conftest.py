@@ -1,6 +1,7 @@
 import os
 import sys
 import pytest
+from pathlib import Path
 from fastapi.testclient import TestClient
 
 # Добавляем корень проекта в sys.path для импортов
@@ -12,15 +13,18 @@ from app import app
 
 
 @pytest.fixture(scope="function")
-def db_conn(monkeypatch):
-    """Фикстура: тестовая БД в памяти."""
-    # Сначала monkeypatch, потом init_db
-    monkeypatch.setattr(config, "DB_PATH", ":memory:")
-    monkeypatch.setattr(db, "DB_PATH", ":memory:")
-    
-    # Инициализируем БД
+def db_conn(tmp_path, monkeypatch):
+    """
+    Фикстура: временный файл SQLite для каждого теста.
+    Все подключения (FastAPI, sessions.py, фикстуры) используют один файл.
+    """
+    test_db = tmp_path / "test.db"
+    monkeypatch.setattr(config, "DB_PATH", test_db)
+    monkeypatch.setattr(db, "DB_PATH", test_db)
+
+    # Инициализируем БД (создаёт таблицы)
     db.init_db()
-    
+
     conn = db.get_db()
     yield conn
     conn.close()
