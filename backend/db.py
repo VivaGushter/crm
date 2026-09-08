@@ -1,5 +1,6 @@
 import sqlite3
 from contextlib import contextmanager
+from datetime import datetime, timezone
 
 DB_PATH = "data/crm.db"
 
@@ -11,6 +12,10 @@ def get_db():
         yield conn
     finally:
         conn.close()
+
+def now_iso() -> str:
+    """Return current UTC time in ISO format."""
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 def init_db():
     """Initialize database with all required tables and migrations."""
