@@ -1,4 +1,4 @@
-import { S } from './state.js';
+import { S, setToken, getToken, clearToken } from './state.js';
 import { $, esc, money, dateKey, dt, labelDate } from './utils.js';
 import { api } from './api.js';
 import { openModal, closeModal, toggleDropdown, closeDropdown } from './ui.js';
@@ -30,7 +30,7 @@ function renderStats() {
 async function setTheme(theme) {
   document.documentElement.dataset.theme = theme;
   $('themeBtn').textContent = theme === 'dark' ? '☀️' : '🌙';
-  try { await api('/api/me/settings', { method: 'PUT', body: JSON.stringify({ theme }) }); } catch (e) {}
+  try { await api('/api/settings', { method: 'PUT', body: JSON.stringify({ theme }) }); } catch (e) {}
 }
 
 async function toggleTheme() {
@@ -60,16 +60,21 @@ async function load() {
 
 async function login() {
   try {
-    S.auth = { user: $('loginUser').value.trim(), pass: $('loginPass').value };
-    const me = await api('/api/me');
-    S.me = me;
-    if ($('rememberMe').checked) localStorage.setItem('master_crm_auth', JSON.stringify(S.auth));
-    else localStorage.removeItem('master_crm_auth');
+    const username = $('loginUser').value.trim();
+    const password = $('loginPass').value;
+    const response = await api('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ username, password })
+    });
+    setToken(response.token);
+    S.me = response.user;
+    if ($('rememberMe').checked) localStorage.setItem('master_crm_remember', '1');
+    else localStorage.removeItem('master_crm_remember');
     $('sessionPill').textContent = 'Вошёл: ' + S.me.name;
     $('menuAdmin').classList.toggle('hidden', S.me.role !== 'admin');
     $('menuUsers').classList.toggle('hidden', S.me.role !== 'admin');
     $('menuAudit').classList.toggle('hidden', !['admin', 'manager'].includes(S.me.role));
-    if (me.theme) setTheme(me.theme);
+    if (S.me.theme) setTheme(S.me.theme);
     else setTheme(document.documentElement.dataset.theme || 'light');
     $('loginView').classList.add('hidden');
     $('appView').classList.remove('hidden');
@@ -80,15 +85,19 @@ async function login() {
   }
 }
 
-function logout(show = true) {
+async function logout() {
+  try {
+    await api('/api/auth/logout', { method: 'POST' });
+  } catch (e) {}
+  clearToken();
   S.auth = null; S.me = null;
-  localStorage.removeItem('master_crm_auth');
+  localStorage.removeItem('master_crm_remember');
   $('appView').classList.add('hidden');
   $('loginView').classList.remove('hidden');
-  if (show) alert('Вы вышли из системы');
+  alert('Вы вышли из системы');
 }
 
-// Обработчики событий — вешаем после определения всех функций
+// Обработчики событий
 $('loginBtn').onclick = () => login();
 $('loginPass').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
 $('themeBtn').onclick = toggleTheme;
@@ -121,11 +130,20 @@ $('themeBtn').textContent = document.documentElement.dataset.theme === 'dark' ? 
 
 // Авто-вход из localStorage
 try {
-  const saved = JSON.parse(localStorage.getItem('master_crm_auth'));
-  if (saved?.user && saved?.pass) {
-    $('loginUser').value = saved.user;
-    $('loginPass').value = saved.pass;
-    $('rememberMe').checked = true;
-    setTimeout(() => login(), 100);
+  const token = getToken();
+  if (token) {
+    const me = await api('/api/auth/me');
+    S.me = me;
+    $('sessionPill').textContent = 'Вошёл: ' + S.me.name;
+    $('menuAdmin').classList.toggle('hidden', S.me.role !== 'admin');
+    $('menuUsers').classList.toggle('hidden', S.me.role !== 'admin');
+    $('menuAudit').classList.toggle('hidden', !['admin', 'manager'].includes(S.me.role));
+    if (S.me.theme) setTheme(S.me.theme);
+    else setTheme(document.documentElement.dataset.theme || 'light');
+    $('loginView').classList.add('hidden');
+    $('appView').classList.remove('hidden');
+    await load();
   }
-} catch (e) {}
+} catch (e) {
+  clearToken();
+}

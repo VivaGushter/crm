@@ -1,9 +1,14 @@
-import { S } from './state.js';
-export function authHeaders() { return S.auth ? { Authorization: 'Basic ' + btoa(S.auth.user + ':' + S.auth.pass) } : {}; }
+import { getToken } from './state.js';
+
+export function authHeaders() {
+  const token = getToken();
+  return token ? { Authorization: 'Bearer ' + token } : {};
+}
+
 export async function api(url, opt = {}) {
   const r = await fetch(url, { ...opt, headers: { 'Content-Type': 'application/json', ...authHeaders(), ...(opt.headers || {}) } });
   if (r.status === 401) {
-    localStorage.removeItem('master_crm_auth');
+    localStorage.removeItem('master_crm_token');
     window.location.reload();
     throw new Error('Нужно войти заново');
   }
