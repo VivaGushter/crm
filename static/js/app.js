@@ -8,6 +8,8 @@ import { renderUsersOptions, renderUsers, newUser, editUser, saveUser, removeUse
 import { openReport, loadReport, openAnalytics } from './reports.js';
 import { openClients, openAllClients, openClientDetail, exportClients, openAudit } from './clients.js';
 
+const PENDING_CALC_KEY = 'master_crm_pending_calc';
+
 // Глобальные функции для HTML-обработчиков
 window.editRequest = editRequest;
 window.removeRequest = removeRequest;
@@ -52,6 +54,19 @@ function selectMenuItem(item) {
   else if (item === 'logout') logout();
 }
 
+function hasPendingCalculation() {
+  try {
+    const pending = JSON.parse(sessionStorage.getItem(PENDING_CALC_KEY) || 'null');
+    return Boolean(pending && Array.isArray(pending.items) && pending.items.length);
+  } catch (e) {
+    return false;
+  }
+}
+
+function openPendingCalculationRequest() {
+  if (hasPendingCalculation()) newRequest();
+}
+
 async function load() {
   S.users = await api('/api/users');
   renderUsersOptions();
@@ -80,7 +95,8 @@ async function login() {
     $('loginView').classList.add('hidden');
     $('appView').classList.remove('hidden');
     await load();
-    clearRequest();
+    if (hasPendingCalculation()) openPendingCalculationRequest();
+    else clearRequest();
   } catch (e) {
     alert(e.message || 'Неверный логин или пароль');
   }
@@ -144,6 +160,7 @@ try {
     $('loginView').classList.add('hidden');
     $('appView').classList.remove('hidden');
     await load();
+    openPendingCalculationRequest();
   }
 } catch (e) {
   clearToken();
