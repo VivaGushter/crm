@@ -19,30 +19,140 @@
 
     <div class="card" style="margin-top:16px">
       <h2 style="margin:0 0 12px">Категории</h2>
+      <button id="newCategoryBtn" class="btn btn-primary" style="width:100%;margin:16px 0">+ Добавить категорию</button>
       <div id="categoriesList" class="list"></div>
     </div>
 
     <div class="card" style="margin-top:16px">
       <h2 style="margin:0 0 12px">Позиции</h2>
+      <button id="newItemBtn" class="btn btn-primary" style="width:100%;margin:16px 0">+ Добавить позицию</button>
       <div id="itemsList" class="list"></div>
     </div>
   </div>
 
+  <!-- Модалка категории -->
+  <div id="categoryModal" class="modal"><div class="sheet"><div class="handle"></div><div class="row"><h2 id="categoryFormTitle" style="margin:0">Новая категория</h2><button class="btn btn-secondary" data-close="categoryModal">Закрыть</button></div><form id="categoryForm"><input id="editCategoryId" type="hidden"><div class="field"><label>Название</label><input id="categoryName" required></div><div class="field"><label>Порядок</label><input id="categorySort" type="number" value="0"></div><div class="two"><button id="deleteCategoryBtn" type="button" class="btn btn-danger hidden">Удалить</button><button type="submit" class="btn btn-primary">Сохранить</button></div></form></div></div>
+
+  <!-- Модалка позиции -->
+  <div id="itemModal" class="modal"><div class="sheet"><div class="handle"></div><div class="row"><h2 id="itemFormTitle" style="margin:0">Новая позиция</h2><button class="btn btn-secondary" data-close="itemModal">Закрыть</button></div><form id="itemForm"><input id="editItemId" type="hidden"><div class="field"><label>Название</label><input id="itemName" required></div><div class="field"><label>Категория</label><select id="itemCategory" required></select></div><div class="field"><label>Цена</label><input id="itemPrice" type="number" min="0" step="1" value="0"></div><div class="field"><label>Ед. изм.</label><select id="itemUnit"><option value="шт">шт</option><option value="м">м</option><option value="м2">м2</option><option value="час">час</option><option value="усл">усл</option></select></div><div class="field"><label>Порядок</label><input id="itemSort" type="number" value="0"></div><div class="two"><button id="deleteItemBtn" type="button" class="btn btn-danger hidden">Удалить</button><button type="submit" class="btn btn-primary">Сохранить</button></div></form></div></div>
+
   <script type="module">
     import { api } from '/static/js/api.js';
     import { $, esc, money } from '/static/js/utils.js';
+    import { openModal, closeModal } from '/static/js/ui.js';
+
+    let categories = [];
 
     async function load() {
       try {
-        const categories = await api('/api/prices/categories');
-        $('categoriesList').innerHTML = categories.map(c => `<div class="request"><div class="row"><div><div class="name">${esc(c.name)}</div></div><div class="muted">ID: ${c.id}</div></div></div>`).join('');
+        categories = await api('/api/prices/categories');
+        $('categoriesList').innerHTML = categories.map(c => `<div class="request"><div class="row"><div><div class="name">${esc(c.name)}</div><div class="muted">Порядок: ${c.sort_order}</div></div><button class="btn btn-secondary" onclick="window.editCategory(${c.id})">Изменить</button></div></div>`).join('');
 
         const items = await api('/api/prices');
         $('itemsList').innerHTML = items.map(i => `<div class="request"><div class="row"><div><div class="name">${esc(i.name)}</div><div class="muted">${esc(i.category_name)}</div></div><div><b>${money(i.price)}</b> / ${esc(i.unit)}</div></div></div>`).join('');
+
+        $('itemCategory').innerHTML = categories.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
       } catch (e) {
         alert('Ошибка: ' + e.message);
       }
     }
+
+    function newCategory() {
+      $('categoryForm').reset(); $('editCategoryId').value = '';
+      $('categoryFormTitle').textContent = 'Новая категория'; $('deleteCategoryBtn').classList.add('hidden');
+      openModal('categoryModal');
+    }
+
+    function editCategory(id) {
+      const c = categories.find(x => x.id === id);
+      if (!c) return;
+      $('editCategoryId').value = c.id; $('categoryName').value = c.name; $('categorySort').value = c.sort_order;
+      $('categoryFormTitle').textContent = 'Редактирование категории'; $('deleteCategoryBtn').classList.remove('hidden');
+      openModal('categoryModal');
+    }
+
+    async function saveCategory(e) {
+      e.preventDefault();
+      const old = $('editCategoryId').value, p = { name: $('categoryName').value.trim(), sort_order: Number($('categorySort').value || 0) };
+      try {
+        await api(old ? '/api/prices/categories/' + old : '/api/prices/categories', { method: old ? 'PUT' : 'POST', body: JSON.stringify(p) });
+        load();
+        closeModal('categoryModal');
+      } catch (e) {
+        alert('Не удалось сохранить: ' + e.message);
+      }
+    }
+
+    async function removeCategory() {
+      const id = $('editCategoryId').value;
+      if (!id || !confirm('Удалить категорию?')) return;
+      try {
+        await api('/api/prices/categories/' + id, { method: 'DELETE' });
+        load();
+        closeModal('categoryModal');
+      } catch (e) {
+        alert('Не удалось удалить: ' + e.message);
+      }
+    }
+
+    function newItem() {
+      $('itemForm').reset(); $('editItemId').value = '';
+      $('itemFormTitle').textContent = 'Новая позиция'; $('deleteItemBtn').classList.add('hidden');
+      $('itemCategory').innerHTML = categories.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+      openModal('itemModal');
+    }
+
+    function editItem(id) {
+      api('/api/prices').then(items => {
+        const i = items.find(x => x.id === id);
+        if (!i) return;
+        $('editItemId').value = i.id; $('itemName').value = i.name; $('itemCategory').value = i.category_id;
+        $('itemPrice').value = i.price; $('itemUnit').value = i.unit; $('itemSort').value = i.sort_order;
+        $('itemFormTitle').textContent = 'Редактирование позиции'; $('deleteItemBtn').classList.remove('hidden');
+        openModal('itemModal');
+      }).catch(e => console.error(e));
+    }
+
+    async function saveItem(e) {
+      e.preventDefault();
+      const old = $('editItemId').value, p = {
+        category_id: Number($('itemCategory').value),
+        name: $('itemName').value.trim(),
+        price: Number($('itemPrice').value || 0),
+        unit: $('itemUnit').value,
+        sort_order: Number($('itemSort').value || 0)
+      };
+      try {
+        await api(old ? '/api/prices/' + old : '/api/prices', { method: old ? 'PUT' : 'POST', body: JSON.stringify(p) });
+        load();
+        closeModal('itemModal');
+      } catch (e) {
+        alert('Не удалось сохранить: ' + e.message);
+      }
+    }
+
+    async function removeItem() {
+      const id = $('editItemId').value;
+      if (!id || !confirm('Удалить позицию?')) return;
+      try {
+        await api('/api/prices/' + id, { method: 'DELETE' });
+        load();
+        closeModal('itemModal');
+      } catch (e) {
+        alert('Не удалось удалить: ' + e.message);
+      }
+    }
+
+    window.editCategory = editCategory;
+    window.newCategory = newCategory;
+    window.editItem = editItem;
+    window.newItem = newItem;
+    $('categoryForm').onsubmit = saveCategory;
+    $('deleteCategoryBtn').onclick = removeCategory;
+    $('itemForm').onsubmit = saveItem;
+    $('deleteItemBtn').onclick = removeItem;
+    document.querySelectorAll('[data-close]').forEach(b => b.onclick = () => closeModal(b.dataset.close));
+    document.querySelectorAll('.modal').forEach(m => m.addEventListener('click', e => { if (e.target === m) closeModal(m.id); }));
 
     load();
   </script>
