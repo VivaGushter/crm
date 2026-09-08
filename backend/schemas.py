@@ -3,6 +3,15 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 
+class RequestItemIn(BaseModel):
+    price_item_id: Optional[int] = None
+    category_name: str = Field(default="", max_length=160)
+    name: str = Field(min_length=1, max_length=200)
+    unit: str = Field(default="шт", max_length=20)
+    unit_price: float = Field(ge=0)
+    quantity: float = Field(gt=0)
+
+
 class RequestIn(BaseModel):
     client: str = Field(min_length=1, max_length=160)
     visit_date: str = Field(min_length=16, max_length=32)
@@ -14,6 +23,7 @@ class RequestIn(BaseModel):
     assignee: str = Field(min_length=1)
     source: str = "unknown"
     contact_method: str = ""
+    items: Optional[list[RequestItemIn]] = None
 
 
 class UserCreate(BaseModel):
