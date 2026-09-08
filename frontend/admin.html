@@ -26,24 +26,32 @@
 
     <div class="card" style="margin-top:16px">
       <h2 style="margin:0 0 12px">Пользователи</h2>
+      <button id="newUserBtn" class="btn btn-primary" style="width:100%;margin:16px 0">+ Добавить пользователя</button>
       <div id="usersList" class="admin-users"></div>
     </div>
 
     <div class="card" style="margin-top:16px">
       <h2 style="margin:0 0 12px">Аудит-лог</h2>
-      <div id="auditList" class="list"></div>
+      <div id="auditList" class="list" style="margin-top:16px"></div>
     </div>
   </div>
 
+  <!-- Модалка пользователя -->
+  <div id="userModal" class="modal"><div class="sheet"><div class="handle"></div><div class="row"><h2 id="userFormTitle" style="margin:0">Новый пользователь</h2><button class="btn btn-secondary" data-close="userModal">Закрыть</button></div><form id="userForm"><input id="editUserId" type="hidden"><div class="field"><label>Логин</label><input id="newUserId" required pattern="[A-Za-z0-9_]+"></div><div class="field"><label>Имя</label><input id="newUserName" required></div><div class="field"><label id="passwordLabel">Пароль</label><input id="newUserPassword" type="password" minlength="4" required></div><div class="field"><label>Роль</label><select id="newUserRole"><option value="user">Мастер</option><option value="manager">Менеджер</option><option value="admin">Администратор</option></select></div><div class="two"><button id="deleteUserBtn" type="button" class="btn btn-danger hidden">Удалить</button><button type="submit" class="btn btn-primary">Сохранить</button></div></form></div></div>
+
   <script type="module">
+    import { S, setToken, getToken, clearToken } from '/static/js/state.js';
     import { api } from '/static/js/api.js';
     import { $, esc, money, dt } from '/static/js/utils.js';
+    import { openModal, closeModal } from '/static/js/ui.js';
+
+    const ROLE_LABELS = { user: 'Мастер', manager: 'Менеджер', admin: 'Администратор' };
 
     async function load() {
       try {
         const users = await api('/api/users');
         $('statUsers').textContent = users.length;
-        $('usersList').innerHTML = users.map(u => `<div class="user"><div><b>${esc(u.name)}</b><br><small>${esc(u.id)} · ${u.role}</small></div></div>`).join('');
+        $('usersList').innerHTML = users.map(u => `<div class="user"><div><b>${esc(u.name)}</b><br><small>${esc(u.id)} · ${ROLE_LABELS[u.role] || u.role}</small></div><button class="btn btn-secondary" onclick="window.editUser('${esc(u.id)}')">Изменить</button></div>`).join('');
 
         const requests = await api('/api/requests');
         $('statRequests').textContent = requests.length;
@@ -51,11 +59,72 @@
         $('statRevenue').textContent = money(requests.filter(r => r.status === 'done').reduce((a, r) => a + Number(r.price || 0), 0));
 
         const audit = await api('/api/admin/audit');
-        $('auditList').innerHTML = audit.slice(0, 20).map(l => `<div class="request"><div class="row"><div><div class="name">${esc(l.user_name || l.user_id)}</div><div class="muted">${dt(l.created_at)}</div></div><span class="badge" style="background:var(--primary-soft)">${esc(l.action)}</span></div><div class="meta"><div><b>Сущность:</b> ${esc(l.entity_type)} ${l.entity_id ? `#${l.entity_id}` : ''}</div></div></div>`).join('');
+        $('auditList').innerHTML = audit.slice(0, 50).map(l => `<article class="request"><div class="row"><div><div class="name">${esc(l.user_name || l.user_id)}</div><div class="muted">${dt(l.created_at)}</div></div><span class="badge" style="background:var(--primary-soft)">${esc(l.action)}</span></div><div class="meta"><div><b>Сущность:</b> ${esc(l.entity_type)} ${l.entity_id ? `#${l.entity_id}` : ''}</div>${l.old_values ? `<div><b>Было:</b> <code style="font-size:12px">${esc(JSON.stringify(JSON.parse(l.old_values)).slice(0, 200))}</code></div>` : ''}${l.new_values ? `<div><b>Стало:</b> <code style="font-size:12px">${esc(JSON.stringify(JSON.parse(l.new_values)).slice(0, 200))}</code></div>` : ''}</div></article>`).join('');
       } catch (e) {
         alert('Ошибка: ' + e.message);
       }
     }
+
+    function renderUsers() {
+      api('/api/users').then(users => {
+        $('usersList').innerHTML = users.map(u => `<div class="user"><div><b>${esc(u.name)}</b><br><small>${esc(u.id)} · ${ROLE_LABELS[u.role] || u.role}</small></div><button class="btn btn-secondary" onclick="window.editUser('${esc(u.id)}')">Изменить</button></div>`).join('');
+      }).catch(e => console.error(e));
+    }
+
+    function newUser() {
+      $('userForm').reset(); $('editUserId').value = ''; $('newUserId').disabled = false;
+      $('newUserPassword').required = true; $('passwordLabel').textContent = 'Пароль';
+      $('userFormTitle').textContent = 'Новый пользователь'; $('deleteUserBtn').classList.add('hidden');
+      openModal('userModal');
+    }
+
+    function editUser(id) {
+      api('/api/users').then(users => {
+        const u = users.find(x => x.id === id);
+        if (!u) return;
+        $('editUserId').value = u.id; $('newUserId').value = u.id; $('newUserId').disabled = true;
+        $('newUserName').value = u.name; $('newUserPassword').value = '';
+        $('newUserPassword').required = false;
+        $('passwordLabel').textContent = 'Новый пароль (оставь пустым, чтобы не менять)';
+        $('newUserRole').value = u.role; $('userFormTitle').textContent = 'Редактирование пользователя';
+        $('deleteUserBtn').classList.toggle('hidden', false);
+        openModal('userModal');
+      }).catch(e => console.error(e));
+    }
+
+    async function saveUser(e) {
+      e.preventDefault();
+      const old = $('editUserId').value, p = { id: $('newUserId').value.trim(), name: $('newUserName').value.trim(), password: $('newUserPassword').value, role: $('newUserRole').value };
+      if (old && !p.password) delete p.password;
+      try {
+        await api(old ? '/api/users/' + old : '/api/users', { method: old ? 'PUT' : 'POST', body: JSON.stringify(p) });
+        renderUsers();
+        closeModal('userModal');
+        load();
+      } catch (e) {
+        alert('Не удалось сохранить: ' + e.message);
+      }
+    }
+
+    async function removeUser() {
+      const id = $('editUserId').value;
+      if (!id || !confirm('Удалить пользователя ' + id + '?')) return;
+      try {
+        await api('/api/users/' + id, { method: 'DELETE' });
+        renderUsers();
+        closeModal('userModal');
+        load();
+      } catch (e) {
+        alert('Не удалось удалить: ' + e.message);
+      }
+    }
+
+    window.editUser = editUser;
+    $('newUserBtn').onclick = newUser;
+    $('userForm').onsubmit = saveUser;
+    $('deleteUserBtn').onclick = removeUser;
+    document.querySelectorAll('[data-close]').forEach(b => b.onclick = () => closeModal(b.dataset.close));
+    document.querySelectorAll('.modal').forEach(m => m.addEventListener('click', e => { if (e.target === m) closeModal(m.id); }));
 
     load();
   </script>
