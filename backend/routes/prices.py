@@ -15,24 +15,30 @@ class CategoryIn(BaseModel):
 class ItemIn(BaseModel):
     category_id: int
     name: str
-    price: float = 0
+    price: str = "0"
     unit: str = "шт"
     sort_order: int = 0
 
 
 @router.get("")
 def list_prices(current_user: dict = Depends(require_auth)) -> list[dict]:
+    """Вернуть категории с вложенными позициями (для price.html)."""
     conn = get_db()
     try:
-        rows = conn.execute(
-            """
-            SELECT p.id, p.name, p.price, p.unit, p.sort_order, p.category_id, c.name AS category_name
-            FROM price_items p
-            JOIN price_categories c ON c.id = p.category_id
-            ORDER BY c.sort_order, p.sort_order, p.name
-            """
-        ).fetchall()
-        return [dict(row) for row in rows]
+        cats = conn.execute("SELECT * FROM price_categories ORDER BY sort_order, name").fetchall()
+        result = []
+        for cat in cats:
+            items = conn.execute(
+                "SELECT * FROM price_items WHERE category_id = ? ORDER BY sort_order, name",
+                (cat["id"],)
+            ).fetchall()
+            result.append({
+                "id": cat["id"],
+                "name": cat["name"],
+                "sort_order": cat["sort_order"],
+                "items": [dict(i) for i in items]
+            })
+        return result
     finally:
         conn.close()
 
@@ -96,7 +102,7 @@ def delete_category(cat_id: int, current_user: dict = Depends(require_auth)) -> 
         conn.close()
 
 
-@router.post("")
+@router.post("/items")
 def create_item(payload: ItemIn, current_user: dict = Depends(require_auth)) -> dict:
     if current_user["role"] not in ("admin", "manager"):
         raise HTTPException(403, "Только администратор и менеджер могут управлять прайсом")
@@ -115,7 +121,7 @@ def create_item(payload: ItemIn, current_user: dict = Depends(require_auth)) -> 
         conn.close()
 
 
-@router.put("/{item_id}")
+@router.put("/items/{item_id}")
 def update_item(item_id: int, payload: ItemIn, current_user: dict = Depends(require_auth)) -> dict:
     if current_user["role"] not in ("admin", "manager"):
         raise HTTPException(403, "Только администратор и менеджер могут управлять прайсом")
@@ -139,7 +145,7 @@ def update_item(item_id: int, payload: ItemIn, current_user: dict = Depends(requ
         conn.close()
 
 
-@router.delete("/{item_id}")
+@router.delete("/items/{item_id}")
 def delete_item(item_id: int, current_user: dict = Depends(require_auth)) -> dict:
     if current_user["role"] not in ("admin", "manager"):
         raise HTTPException(403, "Только администратор и менеджер могут управлять прайсом")
@@ -150,5 +156,25 @@ def delete_item(item_id: int, current_user: dict = Depends(require_auth)) -> dic
         if not cur.rowcount:
             raise HTTPException(404, "Позиция не найдена")
         return {"ok": True}
+    finally:
+        conn.close()
+
+
+@router.get("/export")
+def export_prices(current_user: dict = Depends(require_auth)) -> dict:
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            """
+            SELECT c.name AS category, p.name, p.price, p.unit
+            FROM price_items p
+            JOIN price_categories c ON c.id = p.category_id
+            ORDER BY c.sort_order, p.sort_order, p.name
+            """
+        ).fetchall()
+        csv_lines = ["category,name,price,unit"]
+        for r in rows:
+            csv_lines.append(f'"{r["category"]}","{r["name"]}","{r["price"]}","{r["unit"]}"')
+        return {"csv": "\n".join(csv_lines)}
     finally:
         conn.close()
