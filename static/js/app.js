@@ -42,6 +42,7 @@ async function toggleTheme() {
 function selectMenuItem(item) {
   closeDropdown();
   if (item === 'price') window.location.href = '/price';
+  else if (item === 'calculation') window.location.href = '/calculation';
   else if (item === 'admin') window.location.href = '/admin';
   else if (item === 'clients') openClients();
   else if (item === 'analytics') openAnalytics();
