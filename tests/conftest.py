@@ -1,6 +1,11 @@
 import os
+import sys
 import pytest
 from fastapi.testclient import TestClient
+
+# Добавляем корень проекта в sys.path для импортов
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from backend.db import get_db, init_db, DB_PATH
 from backend.sessions import create_session, delete_all_user_sessions
 from app import app
