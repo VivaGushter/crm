@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Калькуляция | CRM</title>
+  <link rel="preconnect" href="https://api.fontshare.com">
+  <link href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700,900&f[]=general-sans@400,500,600,700&display=swap" rel="stylesheet">
+  <style>
+    :root, [data-theme="light"] { --bg:#f7f6f2; --surface:#fbfbf9; --surface2:#f3f0ec; --border:#d4d1ca; --text:#28251d; --muted:#706d67; --inverse:#f9f8f4; --primary:#01696f; --primary-hover:#0c4e54; --primary-soft:#d7e3df; --success:#437a22; --warning:#a86000; --danger:#a13544; --blue:#006494; --purple:#7a39bb; --radius:14px; --radius-sm:9px; --shadow:0 6px 20px rgba(40,37,29,.08); }
+    [data-theme="dark"] { --bg:#171614; --surface:#1c1b19; --surface2:#272421; --border:#393836; --text:#eceae5; --muted:#b2aea8; --inverse:#141311; --primary:#4f98a3; --primary-hover:#227f8b; --primary-soft:#2b3938; --success:#6daa45; --warning:#edb336; --danger:#dd6974; --blue:#5591c7; --purple:#a86fdf; --shadow:0 8px 28px rgba(0,0,0,.3); }
+    *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 'General Sans',Arial,sans-serif} button,input,textarea,select{font:inherit;color:inherit} button{cursor:pointer} input,textarea,select{width:100%;min-height:44px;padding:10px 12px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--surface);font-size:15px}
+    .hidden{display:none!important}.shell{max-width:1000px;margin:auto;padding:16px 16px 140px}.top{display:flex;gap:12px;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap}.title{margin:0;font:800 28px/1.1 'Satoshi',Arial,sans-serif}.sub{color:var(--muted)}.actions{display:flex;gap:8px;flex-wrap:wrap}.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px}.btn{min-height:42px;padding:8px 14px;border:1px solid transparent;border-radius:var(--radius-sm);font-weight:700;background:transparent}.btn:disabled{opacity:.45;cursor:not-allowed}.btn-primary{background:var(--primary);color:var(--inverse)}.btn-primary:hover:not(:disabled){background:var(--primary-hover)}.btn-secondary{border-color:var(--border);background:var(--surface)}.btn-danger{border-color:color-mix(in srgb,var(--danger) 38%,transparent);color:var(--danger)}.btn-sm{min-height:34px;padding:4px 10px;font-size:14px}
+
+    .category{margin-bottom:12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm)}
+    .cat-head{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;cursor:pointer;border-bottom:2px solid var(--primary)}
+    .cat-head:hover{background:var(--surface2)}
+    .cat-head h3{margin:0;font-size:18px;display:flex;align-items:center;gap:8px}
+    .cat-head h3::before{content:'▼';font-size:12px;transition:transform .2s}
+    .cat-head.collapsed h3::before{transform:rotate(-90deg)}
+    .cat-items{padding:0 14px 14px;transition:max-height .25s ease,opacity .25s ease;max-height:4000px;opacity:1}
+    .cat-head.collapsed+.cat-items{max-height:0;padding-top:0;padding-bottom:0;overflow:hidden;opacity:0}
+
+    .calc-item{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;padding:12px;border:1px solid var(--border);border-radius:var(--radius-sm);margin-top:8px;background:var(--bg)}
+    .calc-item.selected{border-color:var(--primary);box-shadow:0 0 0 1px var(--primary) inset}
+    .calc-item-info{flex:1;min-width:180px}
+    .calc-item-name{font-weight:700}
+    .calc-item-price{color:var(--muted);font-size:14px}
+    .calc-item-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+    .stepper{display:flex;align-items:center;gap:6px}
+    .stepper button{width:36px;min-height:36px;padding:0;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--surface);font-weight:800}
+    .stepper input{width:64px;min-height:36px;text-align:center;padding:4px}
+    .qty-input{width:100px;min-height:36px}
+    .manual-price{width:130px;min-height:36px}
+    .add-btn{min-height:36px;padding:6px 14px}
+    .warn-text{color:var(--warning);font-size:13px;margin-top:4px}
+
+    .empty{padding:24px;text-align:center;color:var(--muted);border:1px dashed var(--border);border-radius:var(--radius)}
+
+    .calc-bar{position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--border);box-shadow:0 -6px 20px rgba(40,37,29,.10);padding:12px 16px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;z-index:50}
+    .calc-bar-info{display:flex;flex-direction:column;gap:2px}
+    .calc-bar-count{color:var(--muted);font-size:14px}
+    .calc-bar-total{font:800 22px/1.1 'Satoshi',Arial,sans-serif}
+  </style>
+  <script>
+    (function(){const saved=localStorage.getItem('master_crm_theme');if(saved){document.documentElement.dataset.theme=saved;return}document.documentElement.dataset.theme=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';})();
+  </script>
+</head>
+<body>
+  <div class="shell">
+    <header class="top">
+      <div><h1 class="title">🧮 Калькуляция</h1><div class="sub">Отметьте нужные работы — сумма считается сразу, без перезагрузки страницы.</div></div>
+      <div class="actions">
+        <button class="btn btn-secondary" onclick="window.location.href='/'">← На главную</button>
+        <button class="btn btn-secondary" onclick="window.location.href='/price'">Открыть прайс</button>
+      </div>
+    </header>
+
+    <div id="priceList"></div>
+  </div>
+
+  <div class="calc-bar">
+    <div class="calc-bar-info">
+      <div class="calc-bar-count" id="calcCount">Выбрано: 0 позиций</div>
+      <div class="calc-bar-total" id="calcTotal">Итого: 0 ₽</div>
+    </div>
+    <button class="btn btn-primary" id="submitBtn" onclick="goToRequestForm()" disabled>Оформить заявку</button>
+  </div>
+
+<script>
+const $=id=>document.getElementById(id);
+const DRAFT_KEY='master_crm_calc_draft';
+const PENDING_KEY='master_crm_pending_calc';
+let prices=[];
+let collapsedCats=new Set();
+let selection=new Map();
+
+function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function getToken(){return localStorage.getItem('master_crm_token');}
+function authHeaders(){const t=getToken();return t?{Authorization:'Bearer '+t}:{}}
+async function api(url,opt={}){const r=await fetch(url,{...opt,headers:{'Content-Type':'application/json',...authHeaders()}});if(!r.ok){const t=await r.text();throw new Error(t||'Ошибка')}return r.json()}
+function money(n){return new Intl.NumberFormat('ru-RU').format(Math.round(n||0))+' ₽'}
+
+function parsePrice(raw){
+  const s=String(raw??'').trim();
+  if(!s) return {mode:'manual'};
+  if(/^\d+([.,]\d+)?$/.test(s)){
+    return {mode:'auto', value:parseFloat(s.replace(',', '.'))};
+  }
+  return {mode:'manual'};
+}
+
+function isCountable(unit){
+  return (unit||'шт').trim()==='шт';
+}
+
+function saveDraft(){
+  try{
+    const arr=Array.from(selection.values());
+    sessionStorage.setItem(DRAFT_KEY, JSON.stringify(arr));
+  }catch(e){}
+}
+
+function restoreDraft(){
+  try{
+    const raw=sessionStorage.getItem(DRAFT_KEY);
+    if(!raw) return;
+    const arr=JSON.parse(raw);
+    if(Array.isArray(arr)){
+      arr.forEach(it=>{ if(it && it.price_item_id!=null) selection.set(it.price_item_id, it); });
+    }
+  }catch(e){}
+}
+
+async function load(){
+  try{
+    prices=await api('/api/prices');
+    prices.forEach(c=>collapsedCats.add(c.id));
+    restoreDraft();
+    render();
+    updateBar();
+  }catch(e){ alert('Ошибка загрузки прайса: '+e.message); }
+}
+
+function toggleCategory(catId){
+  collapsedCats.has(catId)?collapsedCats.delete(catId):collapsedCats.add(catId);
+  render();
+}
+
+function render(){
+  const list=$('priceList');
+  if(!prices.length){ list.innerHTML='<div class="empty">Прайс пуст. Добавьте позиции на странице «Прайс».</div>'; return; }
+  list.innerHTML=prices.map(cat=>{
+    const isCollapsed=collapsedCats.has(cat.id);
+    const items=(cat.items||[]).map(item=>renderItem(cat, item)).join('');
+    return `<div class="category">
+      <div class="cat-head ${isCollapsed?'collapsed':''}" onclick="toggleCategory(${cat.id})">
+        <h3>${esc(cat.name)}</h3>
+      </div>
+      <div class="cat-items">${items || '<div class="empty" style="margin:8px 0">В категории нет позиций</div>'}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderItem(cat, item){
+  const sel=selection.get(item.id);
+  const parsed=parsePrice(item.price);
+  const countable=isCountable(item.unit);
+  const selectedClass=sel?'selected':'';
+  const qty=sel?sel.quantity:(countable?1:'');
+  const manualPrice=sel?sel.unit_price:(parsed.mode==='auto'?parsed.value:'');
+  const priceLabel = parsed.mode==='auto' ? `${money(parsed.value)} / ${esc(item.unit||'шт')}` : `${esc(item.price||'—')} / ${esc(item.unit||'шт')} — уточните цену`;
+
+  const controls = sel
+    ? `
+      ${countable
+        ? `<div class="stepper">
+            <button type="button" onclick="stepQty(${item.id}, -1)">−</button>
+            <input type="number" min="1" step="1" value="${qty}" onchange="setQty(${item.id}, this.value)">
+            <button type="button" onclick="stepQty(${item.id}, 1)">+</button>
+          </div>`
+        : `<input class="qty-input" type="number" min="0.01" step="0.01" placeholder="Кол-во, ${esc(item.unit||'')}" value="${qty}" onchange="setQty(${item.id}, this.value)">`
+      }
+      ${parsed.mode==='manual'
+        ? `<input class="manual-price" type="number" min="0" step="1" placeholder="Цена, ₽" value="${manualPrice}" onchange="setManualPrice(${item.id}, this.value)">`
+        : ''
+      }
+      <button type="button" class="btn btn-sm btn-danger" onclick="removeItem(${item.id})">Убрать</button>
+    `
+    : `<button type="button" class="btn btn-sm btn-primary add-btn" onclick="addItem(${cat.id}, ${item.id})">Добавить</button>`;
+
+  return `<div class="calc-item ${selectedClass}" data-item-id="${item.id}">
+    <div class="calc-item-info">
+      <div class="calc-item-name">${esc(item.name)}</div>
+      <div class="calc-item-price">${priceLabel}</div>
+    </div>
+    <div class="calc-item-controls">${controls}</div>
+  </div>`;
+}
+
+function findItem(itemId){
+  for(const cat of prices){
+    const item=(cat.items||[]).find(i=>i.id===itemId);
+    if(item) return {cat, item};
+  }
+  return null;
+}
+
+function addItem(catId, itemId){
+  const found=findItem(itemId);
+  if(!found) return;
+  const {cat, item}=found;
+  const parsed=parsePrice(item.price);
+  const countable=isCountable(item.unit);
+  selection.set(itemId, {
+    price_item_id: itemId,
+    category_name: cat.name,
+    name: item.name,
+    unit: item.unit || 'шт',
+    unit_price: parsed.mode==='auto' ? parsed.value : 0,
+    quantity: countable ? 1 : 1,
+    manual: parsed.mode==='manual'
+  });
+  saveDraft();
+  render();
+  updateBar();
+}
+
+function removeItem(itemId){
+  selection.delete(itemId);
+  saveDraft();
+  render();
+  updateBar();
+}
+
+function stepQty(itemId, delta){
+  const sel=selection.get(itemId);
+  if(!sel) return;
+  const next=Math.max(1, Math.round((Number(sel.quantity)||1) + delta));
+  sel.quantity=next;
+  saveDraft();
+  render();
+  updateBar();
+}
+
+function setQty(itemId, value){
+  const sel=selection.get(itemId);
+  if(!sel) return;
+  const n=parseFloat(String(value).replace(',', '.'));
+  sel.quantity = (isFinite(n) && n>0) ? n : sel.quantity;
+  saveDraft();
+  updateBar();
+}
+
+function setManualPrice(itemId, value){
+  const sel=selection.get(itemId);
+  if(!sel) return;
+  const n=parseFloat(String(value).replace(',', '.'));
+  sel.unit_price = (isFinite(n) && n>=0) ? n : 0;
+  saveDraft();
+  updateBar();
+}
+
+function isSelectionValid(){
+  if(selection.size===0) return false;
+  for(const sel of selection.values()){
+    if(!sel.quantity || sel.quantity<=0) return false;
+    if(sel.manual && (!sel.unit_price || sel.unit_price<=0)) return false;
+  }
+  return true;
+}
+
+function computeTotal(){
+  let total=0;
+  for(const sel of selection.values()){
+    total += (Number(sel.unit_price)||0) * (Number(sel.quantity)||0);
+  }
+  return Math.round(total*100)/100;
+}
+
+function updateBar(){
+  const count=selection.size;
+  const total=computeTotal();
+  $('calcCount').textContent = `Выбрано: ${count} ${pluralize(count)}`;
+  $('calcTotal').textContent = `Итого: ${money(total)}`;
+  $('submitBtn').disabled = !isSelectionValid();
+}
+
+function pluralize(n){
+  const mod10=n%10, mod100=n%100;
+  if(mod100>=11 && mod100<=14) return 'позиций';
+  if(mod10===1) return 'позиция';
+  if(mod10>=2 && mod10<=4) return 'позиции';
+  return 'позиций';
+}
+
+function goToRequestForm(){
+  if(!isSelectionValid()) return;
+  const items=Array.from(selection.values()).map(sel=>({
+    price_item_id: sel.price_item_id,
+    category_name: sel.category_name,
+    name: sel.name,
+    unit: sel.unit,
+    unit_price: Number(sel.unit_price)||0,
+    quantity: Number(sel.quantity)||0
+  }));
+  const total=computeTotal();
+  try{
+    sessionStorage.setItem(PENDING_KEY, JSON.stringify({items, total}));
+    sessionStorage.removeItem(DRAFT_KEY);
+  }catch(e){}
+  window.location.href='/';
+}
+
+document.querySelectorAll('.modal').forEach(m=>m.addEventListener('click',e=>{if(e.target===m) m.classList.remove('open')}));
+load();
+</script>
+</body>
+</html>
