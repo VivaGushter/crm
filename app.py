@@ -1,8 +1,8 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from backend import auth
-from backend.routes import users, permissions, prices, requests
+from backend.db import init_db, create_default_user
+from backend.routes import auth, users, permissions, prices, requests
 
 app = FastAPI(title="CRM")
 
@@ -17,7 +17,6 @@ app.include_router(requests.router)
 
 @app.on_event("startup")
 def startup_event():
-    from backend.db import init_db, create_default_user
     init_db()
     create_default_user()
 
