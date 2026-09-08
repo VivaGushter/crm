@@ -1,5 +1,5 @@
 import os
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -37,6 +37,14 @@ class LoginOut(BaseModel):
     user: dict
 
 
+def get_bearer_token(request: Request) -> str:
+    """Извлечь Bearer токен из заголовка Authorization."""
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return ""
+    return auth[7:]
+
+
 @app.post("/api/auth/login", response_model=LoginOut)
 def login(payload: LoginIn):
     """Вход: логин + пароль → токен + пользователь."""
@@ -64,13 +72,11 @@ def login(payload: LoginIn):
 
 
 @app.post("/api/auth/logout")
-def logout(token: str = Depends(get_current_user)):
+def logout(request: Request):
     """Выход: удалить сессию."""
-    # Токен извлекается из заголовка Authorization: Bearer <token>
-    # Но Depends(get_current_user) возвращает пользователя, а не токен
-    # Нужно получить токен из заголовка вручную
-    from fastapi import Request
-    # Это будет обработано в следующем коммите
+    token = get_bearer_token(request)
+    if token:
+        delete_session(token)
     return {"ok": True}
 
 
