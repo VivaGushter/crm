@@ -35,7 +35,13 @@ def get_session(token: str) -> Optional[dict]:
         ).fetchone()
         if not row:
             return None
-        if datetime.fromisoformat(row["expires_at"]) < datetime.now():
+        try:
+            if datetime.fromisoformat(row["expires_at"]) < datetime.now():
+                conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
+                conn.commit()
+                return None
+        except ValueError:
+            # Неверный формат даты — удалить сессию
             conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
             conn.commit()
             return None

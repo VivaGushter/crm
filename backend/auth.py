@@ -2,7 +2,7 @@ import hashlib
 import secrets
 from typing import Optional
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer
 
 from .db import get_db
@@ -19,10 +19,12 @@ def verify_password(password: str, password_hash: str) -> bool:
     return secrets.compare_digest(hash_password(password), password_hash)
 
 
-def get_current_user(token: Optional[str] = Depends(security)) -> Optional[dict]:
-    """Получить текущего пользователя по Bearer токену."""
-    if not token:
+def get_current_user(request: Request) -> Optional[dict]:
+    """Получить текущего пользователя по Bearer токену из заголовка."""
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
         return None
+    token = auth[7:]
     session = get_session(token)
     if not session:
         return None
@@ -37,7 +39,7 @@ def get_current_user(token: Optional[str] = Depends(security)) -> Optional[dict]
         conn.close()
 
 
-def require_auth(user: Optional[dict] = Depends(get_current_user)) -> dict:
+def require_auth(request: Request, user: Optional[dict] = Depends(get_current_user)) -> dict:
     """Требовать авторизацию. Вызывать в роутах."""
     if not user:
         raise HTTPException(
