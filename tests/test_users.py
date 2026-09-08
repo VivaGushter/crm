@@ -11,7 +11,7 @@ def test_list_users(client, auth_headers):
     assert any(u["id"] == "test_admin" for u in data)
 
 
-def test_create_user(client, auth_headers):
+def test_create_user(client, auth_headers, db_conn):
     """Тест: создание пользователя."""
     payload = {
         "id": "new_user",
@@ -28,15 +28,15 @@ def test_create_user(client, auth_headers):
     assert any(u["id"] == "new_user" for u in data)
 
 
-def test_update_user(client, auth_headers, db):
+def test_update_user(client, auth_headers, db_conn):
     """Тест: редактирование пользователя."""
     # Создаём пользователя
     password_hash = hashlib.sha256("oldpass".encode("utf-8")).hexdigest()
-    db.execute(
+    db_conn.execute(
         "INSERT INTO users (id, password_hash, name, role, created_at) VALUES (?, ?, ?, ?, ?)",
         ("edit_user", password_hash, "Старое Имя", "user", "2026-01-01T00:00")
     )
-    db.commit()
+    db_conn.commit()
     
     # Обновляем
     payload = {
@@ -48,27 +48,27 @@ def test_update_user(client, auth_headers, db):
     assert response.status_code == 200
     
     # Проверяем обновление
-    row = db.execute("SELECT * FROM users WHERE id = 'edit_user'").fetchone()
+    row = db_conn.execute("SELECT * FROM users WHERE id = 'edit_user'").fetchone()
     assert row["name"] == "Новое Имя"
     assert row["role"] == "manager"
 
 
-def test_delete_user(client, auth_headers, db):
+def test_delete_user(client, auth_headers, db_conn):
     """Тест: удаление пользователя."""
     # Создаём пользователя
     password_hash = hashlib.sha256("delpass".encode("utf-8")).hexdigest()
-    db.execute(
+    db_conn.execute(
         "INSERT INTO users (id, password_hash, name, role, created_at) VALUES (?, ?, ?, ?, ?)",
         ("delete_user", password_hash, "Удалить Пользователь", "user", "2026-01-01T00:00")
     )
-    db.commit()
+    db_conn.commit()
     
     # Удаляем
     response = client.delete("/api/users/delete_user", headers=auth_headers)
     assert response.status_code == 200
     
     # Проверяем удаление
-    row = db.execute("SELECT id FROM users WHERE id = 'delete_user'").fetchone()
+    row = db_conn.execute("SELECT id FROM users WHERE id = 'delete_user'").fetchone()
     assert row is None
 
 
