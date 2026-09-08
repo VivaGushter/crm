@@ -110,6 +110,14 @@ def admin_page():
     return FileResponse(path, media_type="text/html")
 
 
+@app.get("/calculation")
+def calculation_page():
+    path = os.path.join(FRONTEND_DIR, "calculation.html")
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="frontend/calculation.html not found")
+    return FileResponse(path, media_type="text/html")
+
+
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
