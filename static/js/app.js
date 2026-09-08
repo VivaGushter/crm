@@ -121,7 +121,7 @@ $('menuBtn').onclick = toggleDropdown;
 $('prevMonth').onclick = () => { S.month = new Date(S.month.getFullYear(), S.month.getMonth() - 1, 1); renderCalendar(); };
 $('nextMonth').onclick = () => { S.month = new Date(S.month.getFullYear(), S.month.getMonth() + 1, 1); renderCalendar(); };
 $('prevWeek').onclick = () => { S.selected = new Date(new Date(S.selected).setDate(new Date(S.selected).getDate() - 7)); S.month = new Date(S.selected); renderWeek(); };
-$('nextWeek').onclick = () => { S.selected = new Date(new Date(S.selected).setDate(new Date(S.selected).setDate(new Date(S.selected).getDate() + 7)); S.month = new Date(S.selected); renderWeek(); };
+$('nextWeek').onclick = () => { S.selected = new Date(new Date(S.selected).setDate(new Date(S.selected).getDate() + 7)); S.month = new Date(S.selected); renderWeek(); };
 $('prevDay').onclick = () => { S.selected = new Date(new Date(S.selected).setDate(new Date(S.selected).getDate() - 1)); S.month = new Date(S.selected); renderDay(); };
 $('nextDay').onclick = () => { S.selected = new Date(new Date(S.selected).setDate(new Date(S.selected).getDate() + 1)); S.month = new Date(S.selected); renderDay(); };
 $('dateFilter').value = S.selected;
