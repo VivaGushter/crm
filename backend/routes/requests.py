@@ -3,7 +3,7 @@ import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from ..auth import get_current_user
+from ..auth import require_auth
 from ..config import CONTACT_METHODS, SOURCES, STATUSES
 from ..db import get_db, now_iso
 from ..schemas import RequestIn
@@ -44,7 +44,7 @@ def list_requests(
     contact_method: str = "all",
     date_from: Optional[str] = Query(default=None),
     date_to: Optional[str] = Query(default=None),
-    user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_auth),
 ) -> list[dict]:
     sql = """
         SELECT r.*, COALESCE(u.name, r.assignee) AS assignee_name
@@ -55,9 +55,9 @@ def list_requests(
     values = []
     
     # Мастер видит только свои заявки
-    if user["role"] == "user":
+    if current_user["role"] == "user":
         sql += " AND r.assignee = ?"
-        values.append(user["id"])
+        values.append(current_user["id"])
     
     if search.strip():
         like = f"%{search.strip()}%"
@@ -103,9 +103,8 @@ def list_requests(
 
 
 @router.post("")
-def create_request(payload: RequestIn, user: dict = Depends(get_current_user)) -> dict:
-    # Мастер, менеджер и админ могут создавать
-    if user["role"] not in ("user", "manager", "admin"):
+def create_request(payload: RequestIn, current_user: dict = Depends(require_auth)) -> dict:
+    if current_user["role"] not in ("user", "manager", "admin"):
         raise HTTPException(403, "Недостаточно прав")
     
     conn = get_db()
@@ -127,26 +126,22 @@ def create_request(payload: RequestIn, user: dict = Depends(get_current_user)) -
                 payload.price,
                 payload.comment or "",
                 payload.assignee,
-                user["id"],
+                current_user["id"],
                 now,
                 payload.source,
                 payload.contact_method,
             ),
         )
         conn.commit()
-        
-        # Аудит-лог
-        log_audit(conn, user["id"], "create", "request", cur.lastrowid, None, payload.model_dump())
-        
+        log_audit(conn, current_user["id"], "create", "request", cur.lastrowid, None, payload.model_dump())
         return {"ok": True, "id": cur.lastrowid}
     finally:
         conn.close()
 
 
 @router.put("/{request_id}")
-def update_request(request_id: int, payload: RequestIn, user: dict = Depends(get_current_user)) -> dict:
-    # Мастер, менеджер и админ могут редактировать
-    if user["role"] not in ("user", "manager", "admin"):
+def update_request(request_id: int, payload: RequestIn, current_user: dict = Depends(require_auth)) -> dict:
+    if current_user["role"] not in ("user", "manager", "admin"):
         raise HTTPException(403, "Недостаточно прав")
     
     conn = get_db()
@@ -155,17 +150,12 @@ def update_request(request_id: int, payload: RequestIn, user: dict = Depends(get
         exists = conn.execute("SELECT id FROM requests WHERE id = ?", (request_id,)).fetchone()
         if exists is None:
             raise HTTPException(404, "Заявка не найдена")
-        
-        # Мастер может редактировать только свои заявки
-        if user["role"] == "user":
+        if current_user["role"] == "user":
             req = conn.execute("SELECT assignee FROM requests WHERE id = ?", (request_id,)).fetchone()
-            if req["assignee"] != user["id"]:
+            if req["assignee"] != current_user["id"]:
                 raise HTTPException(403, "Можно редактировать только свои заявки")
-        
-        # Получаем старые значения для аудита
         old = conn.execute("SELECT * FROM requests WHERE id = ?", (request_id,)).fetchone()
         old_values = dict(old) if old else None
-        
         now = now_iso()
         conn.execute(
             """
@@ -190,35 +180,26 @@ def update_request(request_id: int, payload: RequestIn, user: dict = Depends(get
             ),
         )
         conn.commit()
-        
-        # Аудит-лог
-        log_audit(conn, user["id"], "update", "request", request_id, old_values, payload.model_dump())
-        
+        log_audit(conn, current_user["id"], "update", "request", request_id, old_values, payload.model_dump())
         return {"ok": True}
     finally:
         conn.close()
 
 
 @router.delete("/{request_id}")
-def delete_request(request_id: int, user: dict = Depends(get_current_user)) -> dict:
-    # Только админ и менеджер могут удалять
-    if user["role"] not in ("admin", "manager"):
+def delete_request(request_id: int, current_user: dict = Depends(require_auth)) -> dict:
+    if current_user["role"] not in ("admin", "manager"):
         raise HTTPException(403, "Только администратор и менеджер могут удалять заявки")
     
     conn = get_db()
     try:
-        # Получаем старые значения для аудита
         old = conn.execute("SELECT * FROM requests WHERE id = ?", (request_id,)).fetchone()
         old_values = dict(old) if old else None
-        
         cur = conn.execute("DELETE FROM requests WHERE id = ?", (request_id,))
         conn.commit()
         if not cur.rowcount:
             raise HTTPException(404, "Заявка не найдена")
-        
-        # Аудит-лог
-        log_audit(conn, user["id"], "delete", "request", request_id, old_values, None)
-        
+        log_audit(conn, current_user["id"], "delete", "request", request_id, old_values, None)
         return {"ok": True}
     finally:
         conn.close()
