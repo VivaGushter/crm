@@ -3,16 +3,16 @@ import { $, esc, money, dateKey, dt, labelDate } from './utils.js';
 import { api } from './api.js';
 import { openModal, closeModal, toggleDropdown, closeDropdown } from './ui.js';
 import { renderCalendar, renderWeek, renderDay, switchView } from './calendar.js';
-import { renderRequests, clearRequest, newRequest, editRequest, removeRequest, saveRequest, loadRequests } from './requests.js';
+import { renderRequests, clearRequest, newRequest, editRequest, removeRequest, saveRequest, loadRequests, openRequestView, editViewedRequest, removeViewedRequest } from './requests.js';
 import { renderUsersOptions, renderUsers, newUser, editUser, saveUser, removeUser } from './users.js';
 import { openReport, loadReport, openAnalytics } from './reports.js';
 import { openClients, openAllClients, openClientDetail, exportClients, openAudit } from './clients.js';
 
 const PENDING_CALC_KEY = 'master_crm_pending_calc';
 
-// Глобальные функции для HTML-обработчиков
 window.editRequest = editRequest;
 window.removeRequest = removeRequest;
+window.openRequestView = openRequestView;
 window.editUser = editUser;
 window.openClientDetail = openClientDetail;
 window.selectMenuItem = selectMenuItem;
@@ -114,7 +114,6 @@ async function logout() {
   alert('Вы вышли из системы');
 }
 
-// Обработчики событий
 $('loginBtn').onclick = () => login();
 $('loginPass').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
 $('themeBtn').onclick = toggleTheme;
@@ -122,7 +121,7 @@ $('menuBtn').onclick = toggleDropdown;
 $('prevMonth').onclick = () => { S.month = new Date(S.month.getFullYear(), S.month.getMonth() - 1, 1); renderCalendar(); };
 $('nextMonth').onclick = () => { S.month = new Date(S.month.getFullYear(), S.month.getMonth() + 1, 1); renderCalendar(); };
 $('prevWeek').onclick = () => { S.selected = new Date(new Date(S.selected).setDate(new Date(S.selected).getDate() - 7)); S.month = new Date(S.selected); renderWeek(); };
-$('nextWeek').onclick = () => { S.selected = new Date(new Date(S.selected).setDate(new Date(S.selected).getDate() + 7)); S.month = new Date(S.selected); renderWeek(); };
+$('nextWeek').onclick = () => { S.selected = new Date(new Date(S.selected).setDate(new Date(S.selected).setDate(new Date(S.selected).getDate() + 7)); S.month = new Date(S.selected); renderWeek(); };
 $('prevDay').onclick = () => { S.selected = new Date(new Date(S.selected).setDate(new Date(S.selected).getDate() - 1)); S.month = new Date(S.selected); renderDay(); };
 $('nextDay').onclick = () => { S.selected = new Date(new Date(S.selected).setDate(new Date(S.selected).getDate() + 1)); S.month = new Date(S.selected); renderDay(); };
 $('dateFilter').value = S.selected;
@@ -133,6 +132,8 @@ $('newRequestFab').onclick = newRequest;
 $('newRequestTop').onclick = newRequest;
 $('clearRequest').onclick = clearRequest;
 $('requestForm').onsubmit = saveRequest;
+$('viewEditBtn').onclick = editViewedRequest;
+$('viewDeleteBtn').onclick = removeViewedRequest;
 $('newUserBtn').onclick = newUser;
 $('userForm').onsubmit = saveUser;
 $('deleteUserBtn').onclick = removeUser;
@@ -145,7 +146,6 @@ document.addEventListener('click', e => { if (!e.target.closest('.dropdown')) cl
 document.documentElement.dataset.theme = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 $('themeBtn').textContent = document.documentElement.dataset.theme === 'dark' ? '☀️' : '🌙';
 
-// Авто-вход из localStorage
 try {
   const token = getToken();
   if (token) {
