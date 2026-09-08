@@ -43,6 +43,19 @@ def init_db() -> None:
             """
         )
         
+        # Таблица сессий
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sessions (
+                token TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+            """
+        )
+        
         # Таблица заявок
         conn.execute(
             """
@@ -87,48 +100,6 @@ def init_db() -> None:
             conn.execute("ALTER TABLE users ADD COLUMN can_edit_requests INTEGER NOT NULL DEFAULT 1")
         if "can_delete_requests" not in user_columns:
             conn.execute("ALTER TABLE users ADD COLUMN can_delete_requests INTEGER NOT NULL DEFAULT 0")
-
-        # Таблица категорий прайса
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS price_categories (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL UNIQUE,
-                sort_order INTEGER NOT NULL DEFAULT 0
-            )
-            """
-        )
-
-        # Таблица позиций прайса
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS price_items (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                category_id INTEGER NOT NULL,
-                name TEXT NOT NULL,
-                price REAL NOT NULL DEFAULT 0,
-                unit TEXT NOT NULL DEFAULT 'шт',
-                sort_order INTEGER NOT NULL DEFAULT 0,
-                FOREIGN KEY (category_id) REFERENCES price_categories(id) ON DELETE CASCADE
-            )
-            """
-        )
-
-        # Таблица аудит-лога
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS audit_log (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id TEXT NOT NULL,
-                action TEXT NOT NULL,
-                entity_type TEXT NOT NULL,
-                entity_id TEXT,
-                old_values TEXT,
-                new_values TEXT,
-                created_at TEXT NOT NULL
-            )
-            """
-        )
 
         # Старые данные
         now = now_iso()
