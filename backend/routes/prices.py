@@ -1,252 +1,154 @@
-import json
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
-from ..auth import get_current_user
+from ..auth import require_auth
 from ..db import get_db, now_iso
 
 router = APIRouter(prefix="/api/prices", tags=["prices"])
 
 
-def log_audit(conn, user_id: str, action: str, entity_type: str, entity_id: str = None, old_values: dict = None, new_values: dict = None):
-    conn.execute(
-        """
-        INSERT INTO audit_log (user_id, action, entity_type, entity_id, old_values, new_values, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        """,
-        (user_id, action, entity_type, str(entity_id), json.dumps(old_values) if old_values else None, json.dumps(new_values) if new_values else None, now_iso()),
-    )
+class CategoryIn(BaseModel):
+    name: str
+    sort_order: int = 0
 
 
-def can_edit_price(user: dict) -> bool:
-    # Админ всегда может редактировать
-    if user["role"] == "admin":
-        return True
-    # Менеджер только с флагом
-    if user["role"] == "manager" and user.get("can_edit_price"):
-        return True
-    return False
-
-
-class PriceCategoryIn(BaseModel):
-    name: str = Field(min_length=1, max_length=200)
-    sort_order: int = Field(default=0)
-
-
-class PriceItemIn(BaseModel):
+class ItemIn(BaseModel):
     category_id: int
-    name: str = Field(min_length=1, max_length=300)
-    price: str = Field(default="0")  # Теперь строка для поддержки диапазонов
-    unit: str = Field(default="шт")
-    sort_order: int = Field(default=0)
-
-
-UNITS = {"шт", "м", "м/пог", "м2"}
+    name: str
+    price: float = 0
+    unit: str = "шт"
+    sort_order: int = 0
 
 
 @router.get("")
-def get_prices(user: dict = Depends(get_current_user)) -> list[dict]:
+def list_prices(current_user: dict = Depends(require_auth)) -> list[dict]:
     conn = get_db()
     try:
-        categories = conn.execute(
-            "SELECT * FROM price_categories ORDER BY sort_order, name"
+        rows = conn.execute(
+            """
+            SELECT p.id, p.name, p.price, p.unit, p.sort_order, p.category_id, c.name AS category_name
+            FROM price_items p
+            JOIN price_categories c ON c.id = p.category_id
+            ORDER BY c.sort_order, p.sort_order, p.name
+            """
         ).fetchall()
-        
-        result = []
-        for cat in categories:
-            cat_dict = dict(cat)
-            items = conn.execute(
-                "SELECT * FROM price_items WHERE category_id = ? ORDER BY sort_order, name",
-                (cat["id"],)
-            ).fetchall()
-            cat_dict["items"] = [dict(item) for item in items]
-            result.append(cat_dict)
-        
-        return result
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+@router.get("/categories")
+def list_categories(current_user: dict = Depends(require_auth)) -> list[dict]:
+    conn = get_db()
+    try:
+        rows = conn.execute("SELECT * FROM price_categories ORDER BY sort_order, name").fetchall()
+        return [dict(row) for row in rows]
     finally:
         conn.close()
 
 
 @router.post("/categories")
-def create_category(payload: PriceCategoryIn, user: dict = Depends(get_current_user)) -> dict:
-    if not can_edit_price(user):
-        raise HTTPException(403, "Нет прав на редактирование прайса")
-    
+def create_category(payload: CategoryIn, current_user: dict = Depends(require_auth)) -> dict:
+    if current_user["role"] not in ("admin", "manager"):
+        raise HTTPException(403, "Только администратор и менеджер могут управлять прайсом")
     conn = get_db()
     try:
-        exists = conn.execute(
-            "SELECT id FROM price_categories WHERE name = ?", (payload.name,)
-        ).fetchone()
-        if exists:
-            raise HTTPException(400, "Категория с таким названием уже существует")
-        
         cur = conn.execute(
             "INSERT INTO price_categories (name, sort_order) VALUES (?, ?)",
             (payload.name, payload.sort_order)
         )
         conn.commit()
-        
-        log_audit(conn, user["id"], "create", "price_category", cur.lastrowid, None, payload.model_dump())
-        
         return {"ok": True, "id": cur.lastrowid}
     finally:
         conn.close()
 
 
 @router.put("/categories/{cat_id}")
-def update_category(cat_id: int, payload: PriceCategoryIn, user: dict = Depends(get_current_user)) -> dict:
-    if not can_edit_price(user):
-        raise HTTPException(403, "Нет прав на редактирование прайса")
-    
+def update_category(cat_id: int, payload: CategoryIn, current_user: dict = Depends(require_auth)) -> dict:
+    if current_user["role"] not in ("admin", "manager"):
+        raise HTTPException(403, "Только администратор и менеджер могут управлять прайсом")
     conn = get_db()
     try:
-        old = conn.execute(
-            "SELECT * FROM price_categories WHERE id = ?", (cat_id,)
-        ).fetchone()
-        if not old:
-            raise HTTPException(404, "Категория не найдена")
-        
-        conn.execute(
+        cur = conn.execute(
             "UPDATE price_categories SET name = ?, sort_order = ? WHERE id = ?",
             (payload.name, payload.sort_order, cat_id)
         )
         conn.commit()
-        
-        log_audit(conn, user["id"], "update", "price_category", cat_id, dict(old), payload.model_dump())
-        
+        if not cur.rowcount:
+            raise HTTPException(404, "Категория не найдена")
         return {"ok": True}
     finally:
         conn.close()
 
 
 @router.delete("/categories/{cat_id}")
-def delete_category(cat_id: int, user: dict = Depends(get_current_user)) -> dict:
-    if not can_edit_price(user):
-        raise HTTPException(403, "Нет прав на редактирование прайса")
-    
+def delete_category(cat_id: int, current_user: dict = Depends(require_auth)) -> dict:
+    if current_user["role"] not in ("admin", "manager"):
+        raise HTTPException(403, "Только администратор и менеджер могут управлять прайсом")
     conn = get_db()
     try:
-        old = conn.execute(
-            "SELECT * FROM price_categories WHERE id = ?", (cat_id,)
-        ).fetchone()
-        if not old:
-            raise HTTPException(404, "Категория не найдена")
-        
-        conn.execute("DELETE FROM price_items WHERE category_id = ?", (cat_id,))
-        conn.execute("DELETE FROM price_categories WHERE id = ?", (cat_id,))
+        cur = conn.execute("DELETE FROM price_categories WHERE id = ?", (cat_id,))
         conn.commit()
-        
-        log_audit(conn, user["id"], "delete", "price_category", cat_id, dict(old), None)
-        
+        if not cur.rowcount:
+            raise HTTPException(404, "Категория не найдена")
         return {"ok": True}
     finally:
         conn.close()
 
 
-@router.post("/items")
-def create_item(payload: PriceItemIn, user: dict = Depends(get_current_user)) -> dict:
-    if not can_edit_price(user):
-        raise HTTPException(403, "Нет прав на редактирование прайса")
-    
-    if payload.unit not in UNITS:
-        raise HTTPException(400, f"Некорректная единица измерения. Допустимые: {', '.join(UNITS)}")
-    
+@router.post("")
+def create_item(payload: ItemIn, current_user: dict = Depends(require_auth)) -> dict:
+    if current_user["role"] not in ("admin", "manager"):
+        raise HTTPException(403, "Только администратор и менеджер могут управлять прайсом")
     conn = get_db()
     try:
-        cat = conn.execute(
-            "SELECT id FROM price_categories WHERE id = ?", (payload.category_id,)
-        ).fetchone()
-        if not cat:
+        exists = conn.execute("SELECT id FROM price_categories WHERE id = ?", (payload.category_id,)).fetchone()
+        if not exists:
             raise HTTPException(400, "Категория не найдена")
-        
         cur = conn.execute(
-            """
-            INSERT INTO price_items (category_id, name, price, unit, sort_order)
-            VALUES (?, ?, ?, ?, ?)
-            """,
+            "INSERT INTO price_items (category_id, name, price, unit, sort_order) VALUES (?, ?, ?, ?, ?)",
             (payload.category_id, payload.name, payload.price, payload.unit, payload.sort_order)
         )
         conn.commit()
-        
-        log_audit(conn, user["id"], "create", "price_item", cur.lastrowid, None, payload.model_dump())
-        
         return {"ok": True, "id": cur.lastrowid}
     finally:
         conn.close()
 
 
-@router.put("/items/{item_id}")
-def update_item(item_id: int, payload: PriceItemIn, user: dict = Depends(get_current_user)) -> dict:
-    if not can_edit_price(user):
-        raise HTTPException(403, "Нет прав на редактирование прайса")
-    
-    if payload.unit not in UNITS:
-        raise HTTPException(400, f"Некорректная единица измерения. Допустимые: {', '.join(UNITS)}")
-    
+@router.put("/{item_id}")
+def update_item(item_id: int, payload: ItemIn, current_user: dict = Depends(require_auth)) -> dict:
+    if current_user["role"] not in ("admin", "manager"):
+        raise HTTPException(403, "Только администратор и менеджер могут управлять прайсом")
     conn = get_db()
     try:
-        old = conn.execute(
-            "SELECT * FROM price_items WHERE id = ?", (item_id,)
-        ).fetchone()
-        if not old:
+        exists = conn.execute("SELECT id FROM price_items WHERE id = ?", (item_id,)).fetchone()
+        if not exists:
             raise HTTPException(404, "Позиция не найдена")
-        
-        conn.execute(
-            """
-            UPDATE price_items SET category_id = ?, name = ?, price = ?, unit = ?, sort_order = ?
-            WHERE id = ?
-            """,
+        cat = conn.execute("SELECT id FROM price_categories WHERE id = ?", (payload.category_id,)).fetchone()
+        if not cat:
+            raise HTTPException(400, "Категория не найдена")
+        cur = conn.execute(
+            "UPDATE price_items SET category_id = ?, name = ?, price = ?, unit = ?, sort_order = ? WHERE id = ?",
             (payload.category_id, payload.name, payload.price, payload.unit, payload.sort_order, item_id)
         )
         conn.commit()
-        
-        log_audit(conn, user["id"], "update", "price_item", item_id, dict(old), payload.model_dump())
-        
-        return {"ok": True}
-    finally:
-        conn.close()
-
-
-@router.delete("/items/{item_id}")
-def delete_item(item_id: int, user: dict = Depends(get_current_user)) -> dict:
-    if not can_edit_price(user):
-        raise HTTPException(403, "Нет прав на редактирование прайса")
-    
-    conn = get_db()
-    try:
-        old = conn.execute(
-            "SELECT * FROM price_items WHERE id = ?", (item_id,)
-        ).fetchone()
-        if not old:
+        if not cur.rowcount:
             raise HTTPException(404, "Позиция не найдена")
-        
-        conn.execute("DELETE FROM price_items WHERE id = ?", (item_id,))
-        conn.commit()
-        
-        log_audit(conn, user["id"], "delete", "price_item", item_id, dict(old), None)
-        
         return {"ok": True}
     finally:
         conn.close()
 
 
-@router.get("/export")
-def export_prices(user: dict = Depends(get_current_user)) -> dict:
+@router.delete("/{item_id}")
+def delete_item(item_id: int, current_user: dict = Depends(require_auth)) -> dict:
+    if current_user["role"] not in ("admin", "manager"):
+        raise HTTPException(403, "Только администратор и менеджер могут управлять прайсом")
     conn = get_db()
     try:
-        categories = conn.execute(
-            "SELECT * FROM price_categories ORDER BY sort_order, name"
-        ).fetchall()
-        
-        csv_lines = ["Категория,Наименование,Цена,Ед.изм."]
-        for cat in categories:
-            items = conn.execute(
-                "SELECT * FROM price_items WHERE category_id = ? ORDER BY sort_order, name",
-                (cat["id"],)
-            ).fetchall()
-            for item in items:
-                csv_lines.append(f'"{cat["name"]}","{item["name"]}",{item["price"]},"{item["unit"]}"')
-        
-        return {"csv": "\n".join(csv_lines)}
+        cur = conn.execute("DELETE FROM price_items WHERE id = ?", (item_id,))
+        conn.commit()
+        if not cur.rowcount:
+            raise HTTPException(404, "Позиция не найдена")
+        return {"ok": True}
     finally:
         conn.close()

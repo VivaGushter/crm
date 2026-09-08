@@ -1,221 +1,173 @@
-import json
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
-from typing import Optional
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 
-from ..auth import get_current_user, hash_password
-from ..db import get_db, now_iso
+from ..auth import require_admin, require_auth, require_manager_or_admin
+from ..db import get_db
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 
-def log_audit(conn, user_id: str, action: str, entity_type: str, entity_id: str = None, old_values: dict = None, new_values: dict = None):
-    conn.execute(
-        """
-        INSERT INTO audit_log (user_id, action, entity_type, entity_id, old_values, new_values, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        """,
-        (user_id, action, entity_type, str(entity_id), json.dumps(old_values) if old_values else None, json.dumps(new_values) if new_values else None, now_iso()),
-    )
+class AnalyticsSummary(BaseModel):
+    total: int
+    active: int
+    completed: int
+    revenue: float
 
 
-class UserPermissions(BaseModel):
-    can_edit_price: Optional[bool] = None
-    can_edit_requests: Optional[bool] = None
-    can_delete_requests: Optional[bool] = None
+@router.get("/analytics/summary")
+def analytics_summary(current_user: dict = Depends(require_auth)) -> dict:
+    conn = get_db()
+    try:
+        total = conn.execute("SELECT COUNT(*) AS c FROM requests").fetchone()["c"]
+        active = conn.execute("SELECT COUNT(*) AS c FROM requests WHERE status IN ('new', 'scheduled', 'work')").fetchone()["c"]
+        completed = conn.execute("SELECT COUNT(*) AS c FROM requests WHERE status = 'done'").fetchone()["c"]
+        revenue = conn.execute("SELECT COALESCE(SUM(price), 0) AS s FROM requests WHERE status = 'done'").fetchone()["s"]
+        
+        by_status = {}
+        for status in ["new", "scheduled", "work", "done", "cancel"]:
+            rows = conn.execute(
+                "SELECT status, COALESCE(SUM(price), 0) AS revenue, COUNT(*) AS count FROM requests WHERE status = ? GROUP BY status",
+                (status,)
+            ).fetchall()
+            row = rows[0] if rows else {"status": status, "revenue": 0, "count": 0}
+            by_status[status] = {"count": row["count"], "revenue": float(row["revenue"])}
+        
+        by_source = {}
+        for src in ["unknown", "avito", "house_chats"]:
+            rows = conn.execute(
+                "SELECT source, COALESCE(SUM(price), 0) AS revenue, COUNT(*) AS count FROM requests WHERE (source IS NULL OR source = ?) AND status = 'done' GROUP BY source",
+                (src,)
+            ).fetchall()
+            row = rows[0] if rows else {"source": src, "revenue": 0, "count": 0}
+            by_source[src] = {"count": row["count"], "revenue": float(row["revenue"])}
+        
+        masters = conn.execute(
+            """
+            SELECT u.name, COALESCE(SUM(r.price), 0) AS revenue, COUNT(r.id) AS count
+            FROM users u
+            LEFT JOIN requests r ON r.assignee = u.id AND r.status = 'done'
+            WHERE u.role = 'user'
+            GROUP BY u.id, u.name
+            ORDER BY count DESC
+            LIMIT 5
+            """
+        ).fetchall()
+        masters_ranking = [{"name": m["name"], "count": m["count"], "revenue": float(m["revenue"])} for m in masters]
+        
+        clients = conn.execute(
+            """
+            SELECT client, COALESCE(SUM(price), 0) AS revenue, COUNT(*) AS count, MAX(visit_date) AS last_visit
+            FROM requests
+            WHERE status = 'done'
+            GROUP BY client
+            ORDER BY count DESC
+            LIMIT 5
+            """
+        ).fetchall()
+        top_clients = [{"client": c["client"], "count": c["count"], "revenue": float(c["revenue"])} for c in clients]
+        
+        return {
+            "total": total,
+            "active": active,
+            "completed": completed,
+            "revenue": float(revenue),
+            "by_status": by_status,
+            "by_source": by_source,
+            "masters_ranking": masters_ranking,
+            "top_clients": top_clients,
+        }
+    finally:
+        conn.close()
 
 
-@router.get("/users")
-def get_all_users(user: dict = Depends(get_current_user)) -> list[dict]:
-    if user["role"] != "admin":
-        raise HTTPException(403, "Только администратор может управлять пользователями")
-    
+@router.get("/clients")
+def list_clients(current_user: dict = Depends(require_auth)) -> list[dict]:
     conn = get_db()
     try:
         rows = conn.execute(
             """
-            SELECT id, name, role, created_at, can_edit_price, can_edit_requests, can_delete_requests
-            FROM users
-            ORDER BY name COLLATE NOCASE
+            SELECT client, COALESCE(SUM(price), 0) AS revenue, COUNT(*) AS count, MAX(visit_date) AS last_visit
+            FROM requests
+            WHERE status = 'done'
+            GROUP BY client
+            ORDER BY last_visit DESC
+            LIMIT 50
             """
         ).fetchall()
-        result = []
-        for row in rows:
-            d = dict(row)
-            # Админ всегда имеет все права
-            if d["role"] == "admin":
-                d["can_edit_price"] = 1
-                d["can_edit_requests"] = 1
-                d["can_delete_requests"] = 1
-            result.append(d)
-        return result
-    finally:
-        conn.close()
-
-
-@router.put("/users/{user_id}/permissions")
-def update_user_permissions(user_id: str, payload: UserPermissions, user: dict = Depends(get_current_user)) -> dict:
-    if user["role"] != "admin":
-        raise HTTPException(403, "Только администратор может управлять правами")
-    
-    conn = get_db()
-    try:
-        target = conn.execute(
-            "SELECT id, role, can_edit_price, can_edit_requests, can_delete_requests FROM users WHERE id = ?",
-            (user_id,)
-        ).fetchone()
-        if not target:
-            raise HTTPException(404, "Пользователь не найден")
-        
-        if target["role"] not in ("manager",):
-            raise HTTPException(400, "Права можно назначать только менеджерам")
-        
-        old_values = {
-            "can_edit_price": bool(target["can_edit_price"]),
-            "can_edit_requests": bool(target["can_edit_requests"]),
-            "can_delete_requests": bool(target["can_delete_requests"]),
-        }
-        
-        changes = []
-        values = []
-        
-        if payload.can_edit_price is not None:
-            changes.append("can_edit_price = ?")
-            values.append(1 if payload.can_edit_price else 0)
-        if payload.can_edit_requests is not None:
-            changes.append("can_edit_requests = ?")
-            values.append(1 if payload.can_edit_requests else 0)
-        if payload.can_delete_requests is not None:
-            changes.append("can_delete_requests = ?")
-            values.append(1 if payload.can_delete_requests else 0)
-        
-        if changes:
-            values.append(user_id)
-            conn.execute(f"UPDATE users SET {', '.join(changes)} WHERE id = ?", values)
-            conn.commit()
-            
-            new_values = {
-                "can_edit_price": bool(payload.can_edit_price) if payload.can_edit_price is not None else old_values["can_edit_price"],
-                "can_edit_requests": bool(payload.can_edit_requests) if payload.can_edit_requests is not None else old_values["can_edit_requests"],
-                "can_delete_requests": bool(payload.can_delete_requests) if payload.can_delete_requests is not None else old_values["can_delete_requests"],
+        return [
+            {
+                "client": r["client"],
+                "count": r["count"],
+                "revenue": float(r["revenue"]),
+                "last_visit": r["last_visit"],
             }
-            
-            log_audit(conn, user["id"], "update_permissions", "user", user_id, old_values, new_values)
-        
-        return {"ok": True}
+            for r in rows
+        ]
     finally:
         conn.close()
 
 
-@router.post("/users")
-def create_user(payload: dict, user: dict = Depends(get_current_user)) -> dict:
-    if user["role"] != "admin":
-        raise HTTPException(403, "Только администратор может создавать пользователей")
-    
-    required = ["id", "name", "password", "role"]
-    for field in required:
-        if field not in payload or not payload[field]:
-            raise HTTPException(400, f"Поле '{field}' обязательно")
-    
-    if payload["role"] not in ("user", "manager", "admin"):
-        raise HTTPException(400, "Некорректная роль")
-    
+@router.get("/clients/export")
+def export_clients(current_user: dict = Depends(require_auth)) -> dict:
     conn = get_db()
     try:
-        exists = conn.execute("SELECT id FROM users WHERE id = ?", (payload["id"],)).fetchone()
-        if exists:
-            raise HTTPException(400, "Пользователь с таким логином уже существует")
-        
-        # Админ по умолчанию имеет все права, остальные - только can_edit_requests
-        if payload["role"] == "admin":
-            perms = (1, 1, 1)
-        else:
-            perms = (0, 1, 0)
-        
-        conn.execute(
+        rows = conn.execute(
             """
-            INSERT INTO users (id, password_hash, name, role, created_at, can_edit_price, can_edit_requests, can_delete_requests)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            SELECT client, phone, address, COALESCE(SUM(price), 0) AS revenue, COUNT(*) AS count, MAX(visit_date) AS last_visit
+            FROM requests
+            WHERE status = 'done'
+            GROUP BY client, phone, address
+            ORDER BY last_visit DESC
+            """
+        ).fetchall()
+        csv_lines = ["client,phone,address,revenue,count,last_visit"]
+        for r in rows:
+            csv_lines.append(f'"{r["client"]}","{r["phone"]}","{r["address"]}",{r["revenue"]},{r["count"]},"{r["last_visit"]}"')
+        return {"csv": "\n".join(csv_lines)}
+    finally:
+        conn.close()
+
+
+@router.get("/clients/{client_name}")
+def get_client(client_name: str, current_user: dict = Depends(require_auth)) -> dict:
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            """
+            SELECT * FROM requests
+            WHERE client = ?
+            ORDER BY visit_date DESC
             """,
-            (payload["id"], hash_password(payload["password"]), payload["name"], payload["role"], now_iso(), *perms)
-        )
-        conn.commit()
-        
-        log_audit(conn, user["id"], "create", "user", payload["id"], None, payload)
-        
-        return {"ok": True}
+            (client_name,),
+        ).fetchall()
+        if not rows:
+            from fastapi import HTTPException
+            raise HTTPException(404, "Клиент не найден")
+        total = len(rows)
+        revenue = sum(float(r["price"] or 0) for r in rows)
+        return {
+            "client": client_name,
+            "total": total,
+            "revenue": revenue,
+            "requests": [dict(r) for r in rows],
+        }
     finally:
         conn.close()
 
 
-@router.put("/users/{user_id}")
-def update_user(user_id: str, payload: dict, user: dict = Depends(get_current_user)) -> dict:
-    if user["role"] != "admin":
-        raise HTTPException(403, "Только администратор может редактировать пользователей")
-    
+@router.get("/audit")
+def get_audit(current_user: dict = Depends(require_manager_or_admin)) -> list[dict]:
     conn = get_db()
     try:
-        existing = conn.execute("SELECT id, role FROM users WHERE id = ?", (user_id,)).fetchone()
-        if not existing:
-            raise HTTPException(404, "Пользователь не найден")
-        
-        changes = []
-        values = []
-        old_values = dict(existing)
-        
-        if "name" in payload and payload["name"]:
-            changes.append("name = ?")
-            values.append(payload["name"])
-        if "password" in payload and payload["password"]:
-            changes.append("password_hash = ?")
-            values.append(hash_password(payload["password"]))
-        if "role" in payload and payload["role"]:
-            if payload["role"] not in ("user", "manager", "admin"):
-                raise HTTPException(400, "Некорректная роль")
-            changes.append("role = ?")
-            values.append(payload["role"])
-        
-        if changes:
-            values.append(user_id)
-            conn.execute(f"UPDATE users SET {', '.join(changes)} WHERE id = ?", values)
-            conn.commit()
-            
-            new_values = {**old_values, **{k: v for k, v in zip(["name", "role"], values[:2])}}
-            log_audit(conn, user["id"], "update", "user", user_id, old_values, new_values)
-        
-        return {"ok": True}
-    finally:
-        conn.close()
-
-
-@router.delete("/users/{user_id}")
-def delete_user(user_id: str, user: dict = Depends(get_current_user)) -> dict:
-    if user["role"] != "admin":
-        raise HTTPException(403, "Только администратор может удалять пользователей")
-    
-    if user_id == user["id"]:
-        raise HTTPException(400, "Нельзя удалить свой аккаунт")
-    
-    conn = get_db()
-    try:
-        target = conn.execute("SELECT id, role FROM users WHERE id = ?", (user_id,)).fetchone()
-        if not target:
-            raise HTTPException(404, "Пользователь не найден")
-        
-        if target["role"] == "admin":
-            admins = conn.execute("SELECT COUNT(*) AS count FROM users WHERE role = 'admin'").fetchone()["count"]
-            if admins <= 1:
-                raise HTTPException(400, "Нельзя удалить последнего администратора")
-        
-        references = conn.execute("SELECT COUNT(*) AS count FROM requests WHERE assignee = ?", (user_id,)).fetchone()["count"]
-        if references:
-            raise HTTPException(400, "Нельзя удалить пользователя: на него назначены заявки")
-        
-        log_audit(conn, user["id"], "delete", "user", user_id, dict(target), None)
-        
-        conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
-        conn.commit()
-        
-        return {"ok": True}
+        rows = conn.execute(
+            """
+            SELECT a.*, u.name AS user_name
+            FROM audit_log a
+            LEFT JOIN users u ON u.id = a.user_id
+            ORDER BY a.created_at DESC
+            LIMIT 100
+            """
+        ).fetchall()
+        return [dict(r) for r in rows]
     finally:
         conn.close()
