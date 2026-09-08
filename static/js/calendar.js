@@ -1,6 +1,8 @@
 import { S } from './state.js';
-import { $, localDateKey, labelDate, dt, getWeekStart, dateKey, esc } from './utils.js';
-import { STATUSES } from './constants.js';
+import { $, localDateKey, labelDate, dt, getWeekStart, dateKey, esc, money } from './utils.js';
+import { STATUSES, SOURCE_LABELS, CONTACT_METHOD_LABELS } from './constants.js';
+import { renderRequests } from './requests.js';
+import { switchView } from './calendar.js';
 
 export function renderCalendar() {
   const m = S.month, start = new Date(m.getFullYear(), m.getMonth(), 1), weekday = (start.getDay() + 6) % 7;
@@ -61,6 +63,3 @@ export function switchView(v) {
   if (v === 'week') renderWeek();
   if (v === 'day') renderDay();
 }
-
-import { SOURCE_LABELS, CONTACT_METHOD_LABELS } from './constants.js';
-import { money } from './utils.js';

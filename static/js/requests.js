@@ -3,7 +3,7 @@ import { $, esc, dateKey, dt, money, labelDate } from './utils.js';
 import { STATUSES, SOURCE_LABELS, CONTACT_METHOD_LABELS } from './constants.js';
 import { api } from './api.js';
 import { openModal, closeModal } from './ui.js';
-import { switchView } from './calendar.js';
+import { renderCalendar, renderWeek, renderDay } from './calendar.js';
 
 export function filtered() {
   const q = $('search').value.trim().toLowerCase(), st = $('statusFilter').value, as = $('assigneeFilter').value,
@@ -75,5 +75,3 @@ export async function loadRequests() {
   if (typeof window.renderCalendar === 'function') window.renderCalendar();
   renderRequests();
 }
-
-import { renderCalendar, renderWeek, renderDay } from './calendar.js';

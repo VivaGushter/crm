@@ -1,3 +1,4 @@
+import { S } from './state.js';
 import { $, esc, dt, money } from './utils.js';
 import { STATUSES } from './constants.js';
 import { api } from './api.js';
@@ -46,5 +47,3 @@ export async function openAudit() {
     openModal('auditModal');
   } catch (e) { alert('Не удалось загрузить аудит: ' + e.message); }
 }
-
-import { S } from './state.js';
