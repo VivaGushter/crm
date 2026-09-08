@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from ..auth import require_auth
 from ..config import CONTACT_METHODS, SOURCES, STATUSES
 from ..db import get_db, now_iso
-from ..schemas import RequestIn
+from ..schemas import RequestIn, RequestItemIn
 
 router = APIRouter(prefix="/api/requests", tags=["requests"])
 
@@ -23,6 +23,50 @@ def validate_request_payload(conn, payload: RequestIn, creating: bool = False) -
     assignee = conn.execute("SELECT id FROM users WHERE id = ?", (payload.assignee,)).fetchone()
     if assignee is None:
         raise HTTPException(400, "Выбранный исполнитель не существует")
+
+
+def validate_items_total(payload: RequestIn) -> None:
+    if not payload.items:
+        return
+    calculated = round(sum(i.unit_price * i.quantity for i in payload.items), 2)
+    if abs(calculated - payload.price) > 1:
+        raise HTTPException(400, "Сумма заявки не совпадает с суммой позиций калькуляции")
+
+
+def save_request_items(conn, request_id: int, items: list[RequestItemIn]) -> None:
+    """Полностью перезаписывает состав работ заявки (удалить всё → вставить заново)."""
+    conn.execute("DELETE FROM request_calculation_items WHERE request_id = ?", (request_id,))
+    now = now_iso()
+    for idx, item in enumerate(items):
+        line_total = round(item.unit_price * item.quantity, 2)
+        conn.execute(
+            """
+            INSERT INTO request_calculation_items
+            (request_id, price_item_id, category_name_snapshot, name_snapshot,
+             unit_snapshot, unit_price, quantity, line_total, sort_order, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                request_id,
+                item.price_item_id,
+                item.category_name,
+                item.name,
+                item.unit,
+                item.unit_price,
+                item.quantity,
+                line_total,
+                idx,
+                now,
+            ),
+        )
+
+
+def fetch_request_items(conn, request_id: int) -> list[dict]:
+    rows = conn.execute(
+        "SELECT * FROM request_calculation_items WHERE request_id = ? ORDER BY sort_order, id",
+        (request_id,),
+    ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def log_audit(conn, user_id: str, action: str, entity_type: str, entity_id: str = None, old_values: dict = None, new_values: dict = None):
@@ -53,12 +97,12 @@ def list_requests(
         WHERE 1 = 1
     """
     values = []
-    
+
     # Мастер видит только свои заявки
     if current_user["role"] == "user":
         sql += " AND r.assignee = ?"
         values.append(current_user["id"])
-    
+
     if search.strip():
         like = f"%{search.strip()}%"
         sql += """ AND (
@@ -102,14 +146,39 @@ def list_requests(
         conn.close()
 
 
+@router.get("/{request_id}")
+def get_request(request_id: int, current_user: dict = Depends(require_auth)) -> dict:
+    conn = get_db()
+    try:
+        row = conn.execute(
+            """
+            SELECT r.*, COALESCE(u.name, r.assignee) AS assignee_name
+            FROM requests r
+            LEFT JOIN users u ON u.id = r.assignee
+            WHERE r.id = ?
+            """,
+            (request_id,),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(404, "Заявка не найдена")
+        if current_user["role"] == "user" and row["assignee"] != current_user["id"]:
+            raise HTTPException(403, "Недостаточно прав")
+        data = dict(row)
+        data["items"] = fetch_request_items(conn, request_id)
+        return data
+    finally:
+        conn.close()
+
+
 @router.post("")
 def create_request(payload: RequestIn, current_user: dict = Depends(require_auth)) -> dict:
     if current_user["role"] not in ("user", "manager", "admin"):
         raise HTTPException(403, "Недостаточно прав")
-    
+
     conn = get_db()
     try:
         validate_request_payload(conn, payload, creating=True)
+        validate_items_total(payload)
         now = now_iso()
         cur = conn.execute(
             """
@@ -132,9 +201,12 @@ def create_request(payload: RequestIn, current_user: dict = Depends(require_auth
                 payload.contact_method,
             ),
         )
+        request_id = cur.lastrowid
+        if payload.items:
+            save_request_items(conn, request_id, payload.items)
         conn.commit()
-        log_audit(conn, current_user["id"], "create", "request", cur.lastrowid, None, payload.model_dump())
-        return {"ok": True, "id": cur.lastrowid}
+        log_audit(conn, current_user["id"], "create", "request", request_id, None, payload.model_dump())
+        return {"ok": True, "id": request_id}
     finally:
         conn.close()
 
@@ -143,10 +215,11 @@ def create_request(payload: RequestIn, current_user: dict = Depends(require_auth
 def update_request(request_id: int, payload: RequestIn, current_user: dict = Depends(require_auth)) -> dict:
     if current_user["role"] not in ("user", "manager", "admin"):
         raise HTTPException(403, "Недостаточно прав")
-    
+
     conn = get_db()
     try:
         validate_request_payload(conn, payload, creating=False)
+        validate_items_total(payload)
         exists = conn.execute("SELECT id FROM requests WHERE id = ?", (request_id,)).fetchone()
         if exists is None:
             raise HTTPException(404, "Заявка не найдена")
@@ -179,6 +252,10 @@ def update_request(request_id: int, payload: RequestIn, current_user: dict = Dep
                 request_id,
             ),
         )
+        # Состав пересохраняется, только если поле items явно передано.
+        # None означает "состав не трогать", пустой список [] означает "очистить состав".
+        if payload.items is not None:
+            save_request_items(conn, request_id, payload.items)
         conn.commit()
         log_audit(conn, current_user["id"], "update", "request", request_id, old_values, payload.model_dump())
         return {"ok": True}
@@ -190,7 +267,7 @@ def update_request(request_id: int, payload: RequestIn, current_user: dict = Dep
 def delete_request(request_id: int, current_user: dict = Depends(require_auth)) -> dict:
     if current_user["role"] not in ("admin", "manager"):
         raise HTTPException(403, "Только администратор и менеджер могут удалять заявки")
-    
+
     conn = get_db()
     try:
         old = conn.execute("SELECT * FROM requests WHERE id = ?", (request_id,)).fetchone()
