@@ -6,43 +6,44 @@ from fastapi.testclient import TestClient
 # Добавляем корень проекта в sys.path для импортов
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from backend.db import get_db, init_db, DB_PATH
-from backend.sessions import create_session, delete_all_user_sessions
+from backend import db, config
+from backend.sessions import delete_all_user_sessions
 from app import app
 
 
-TEST_DB_PATH = ":memory:"
-
-
 @pytest.fixture(scope="function")
-def db(monkeypatch):
+def db_conn(monkeypatch):
     """Фикстура: тестовая БД в памяти."""
-    monkeypatch.setattr("backend.db.DB_PATH", TEST_DB_PATH)
-    monkeypatch.setattr("backend.config.DB_PATH", TEST_DB_PATH)
-    init_db()
-    conn = get_db()
+    # Сначала monkeypatch, потом init_db
+    monkeypatch.setattr(config, "DB_PATH", ":memory:")
+    monkeypatch.setattr(db, "DB_PATH", ":memory:")
+    
+    # Инициализируем БД
+    db.init_db()
+    
+    conn = db.get_db()
     yield conn
     conn.close()
 
 
 @pytest.fixture(scope="function")
-def client(db):
+def client(db_conn):
     """Фикстура: TestClient для FastAPI."""
     return TestClient(app)
 
 
 @pytest.fixture(scope="function")
-def test_user(db):
+def test_user(db_conn):
     """Фикстура: тестовый пользователь admin."""
     import hashlib
     user_id = "test_admin"
     password = "testpass123"
     password_hash = hashlib.sha256(password.encode("utf-8")).hexdigest()
-    db.execute(
+    db_conn.execute(
         "INSERT INTO users (id, password_hash, name, role, created_at) VALUES (?, ?, ?, ?, ?)",
         (user_id, password_hash, "Test Admin", "admin", "2026-01-01T00:00")
     )
-    db.commit()
+    db_conn.commit()
     return {"id": user_id, "password": password}
 
 
