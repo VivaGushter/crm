@@ -42,7 +42,7 @@ def init_db() -> None:
             )
             """
         )
-        
+
         # Таблица сессий
         conn.execute(
             """
@@ -55,7 +55,7 @@ def init_db() -> None:
             )
             """
         )
-        
+
         # Таблица заявок
         conn.execute(
             """
@@ -74,6 +74,68 @@ def init_db() -> None:
                 source TEXT NOT NULL DEFAULT 'unknown',
                 contact_method TEXT NOT NULL DEFAULT '',
                 FOREIGN KEY (assignee) REFERENCES users(id)
+            )
+            """
+        )
+
+        # Таблица категорий прайса
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS price_categories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                sort_order INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
+
+        # Таблица позиций прайса
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS price_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                category_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                price TEXT NOT NULL DEFAULT '0',
+                unit TEXT NOT NULL DEFAULT 'шт',
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY (category_id) REFERENCES price_categories(id) ON DELETE CASCADE
+            )
+            """
+        )
+
+        # Таблица журнала аудита
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS audit_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                action TEXT NOT NULL,
+                entity_type TEXT NOT NULL,
+                entity_id TEXT,
+                old_values TEXT,
+                new_values TEXT,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+
+        # Таблица состава работ (калькуляция), привязанного к заявке
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS request_calculation_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                request_id INTEGER NOT NULL,
+                price_item_id INTEGER,
+                category_name_snapshot TEXT NOT NULL DEFAULT '',
+                name_snapshot TEXT NOT NULL,
+                unit_snapshot TEXT NOT NULL DEFAULT 'шт',
+                unit_price REAL NOT NULL DEFAULT 0,
+                quantity REAL NOT NULL DEFAULT 1,
+                line_total REAL NOT NULL DEFAULT 0,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (request_id) REFERENCES requests(id) ON DELETE CASCADE
             )
             """
         )
