@@ -1,74 +1,39 @@
-import os
-
-from fastapi import FastAPI, HTTPException, Depends
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from backend.db import init_db, create_default_user
+from backend.routes import auth, users, permissions, prices, requests
 
-from backend.db import init_db
-from backend.routes import reports, requests, users, settings, prices, admin
-from backend.auth import get_current_user
+app = FastAPI(title="CRM")
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
-STATIC_DIR = os.path.join(BASE_DIR, "static")
+app.mount("/static", StaticFiles(directory="frontend"), name="static")
 
-os.makedirs(FRONTEND_DIR, exist_ok=True)
-os.makedirs(STATIC_DIR, exist_ok=True)
-
-app = FastAPI(title="Master CRM")
-
-# В каждом router уже указан собственный путь /api/...
-app.include_router(reports.router)
-app.include_router(requests.router)
+app.include_router(auth.router)
 app.include_router(users.router)
-app.include_router(settings.router)
+app.include_router(permissions.router)
 app.include_router(prices.router)
-app.include_router(admin.router)
-
-
-@app.get("/")
-def index():
-    path = os.path.join(FRONTEND_DIR, "index.html")
-    if not os.path.isfile(path):
-        raise HTTPException(status_code=404, detail="frontend/index.html not found")
-    return FileResponse(path, media_type="text/html")
-
-
-@app.get("/price")
-def price_page():
-    path = os.path.join(FRONTEND_DIR, "price.html")
-    if not os.path.isfile(path):
-        raise HTTPException(status_code=404, detail="frontend/price.html not found")
-    return FileResponse(path, media_type="text/html")
-
-
-@app.get("/admin")
-def admin_page():
-    path = os.path.join(FRONTEND_DIR, "admin.html")
-    if not os.path.isfile(path):
-        raise HTTPException(status_code=404, detail="frontend/admin.html not found")
-    return FileResponse(path, media_type="text/html")
-
-
-@app.get("/api/me")
-def me(current_user: dict = Depends(get_current_user)):
-    from backend.db import get_db
-    conn = get_db()
-    try:
-        row = conn.execute(
-            "SELECT id, name, role, theme, can_edit_price, can_edit_requests, can_delete_requests FROM users WHERE id = ?",
-            (current_user["id"],)
-        ).fetchone()
-        if not row:
-            raise HTTPException(404, "User not found")
-        return dict(row)
-    finally:
-        conn.close()
-
-
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+app.include_router(requests.router)
 
 
 @app.on_event("startup")
-def startup():
+def startup_event():
     init_db()
+    create_default_user()
+
+
+@app.get("/")
+def read_root(request: Request):
+    with open("frontend/index.html", "r", encoding="utf-8") as f:
+        return HTMLResponse(content=f.read())
+
+
+@app.get("/prices")
+def read_prices(request: Request):
+    with open("frontend/price.html", "r", encoding="utf-8") as f:
+        return HTMLResponse(content=f.read())
+
+
+@app.get("/calculator")
+def read_calculator(request: Request):
+    with open("frontend/calculator.html", "r", encoding="utf-8") as f:
+        return HTMLResponse(content=f.read())
