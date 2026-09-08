@@ -1,8 +1,6 @@
 import { S } from './state.js';
 import { $, localDateKey, labelDate, dt, getWeekStart, dateKey, esc, money } from './utils.js';
 import { STATUSES, SOURCE_LABELS, CONTACT_METHOD_LABELS } from './constants.js';
-import { renderRequests } from './requests.js';
-import { switchView } from './calendar.js';
 
 export function renderCalendar() {
   const m = S.month, start = new Date(m.getFullYear(), m.getMonth(), 1), weekday = (start.getDay() + 6) % 7;
@@ -25,7 +23,7 @@ export function renderCalendar() {
     if (statusCounts.done > 0) dotsHtml += `<span class="status-dot status-done" title="Завершена: ${statusCounts.done}"></span>`;
     if (statusCounts.cancel > 0) dotsHtml += `<span class="status-dot status-cancel" title="Отменена: ${statusCounts.cancel}"></span>`;
     b.innerHTML = `<div class="dhead"><span>${d.getDate()}</span><span>${list.length || ''}</span></div><div style="margin-top:6px">${dotsHtml}${list.slice(0, 1).map(x => `<div class="dot">${esc(x.client)}</div>`).join('')}</div>`;
-    b.onclick = () => { S.selected = k; $('dateFilter').value = k; renderCalendar(); if (typeof window.renderRequests === 'function') window.renderRequests(); if (S.view !== 'month') switchView('month'); };
+    b.onclick = () => { S.selected = k; $('dateFilter').value = k; renderCalendar(); if (typeof window.renderRequests === 'function') window.renderRequests(); if (S.view !== 'month') window.switchView('month'); };
     $('calendar').appendChild(b);
   }
 }
