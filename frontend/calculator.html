@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Калькуляция — CRM</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #f5f5f5;
+            color: #222;
+            padding-bottom: 140px;
+        }
+        header {
+            background: #fff;
+            border-bottom: 1px solid #e0e0e0;
+            padding: 12px 16px;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        .header-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .back-btn {
+            background: none;
+            border: none;
+            font-size: 24px;
+            color: #333;
+            cursor: pointer;
+            padding: 4px 8px 4px 0;
+        }
+        h1 {
+            font-size: 20px;
+            font-weight: 600;
+            flex: 1;
+            text-align: center;
+        }
+        .placeholder-spacer {
+            width: 36px;
+        }
+        .category {
+            background: #fff;
+            margin: 12px 12px;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        }
+        .category-header {
+            padding: 14px 16px;
+            background: #f9f9f9;
+            border-bottom: 1px solid #eee;
+            font-weight: 600;
+            font-size: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            cursor: pointer;
+        }
+        .category-header .toggle {
+            font-size: 18px;
+            color: #888;
+        }
+        .category-items {
+            display: none;
+        }
+        .category.open .category-items {
+            display: block;
+        }
+        .item {
+            padding: 14px 16px;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        .item:last-child {
+            border-bottom: none;
+        }
+        .item-name {
+            font-weight: 500;
+            margin-bottom: 6px;
+            font-size: 15px;
+        }
+        .item-price {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
+        .item-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .qty-control {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .qty-btn {
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            border: 1px solid #ddd;
+            background: #fff;
+            font-size: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+        }
+        .qty-input {
+            width: 60px;
+            height: 36px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            text-align: center;
+            font-size: 16px;
+        }
+        .price-input-wrap {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex: 1;
+            min-width: 140px;
+        }
+        .price-input {
+            flex: 1;
+            height: 36px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 0 8px;
+            font-size: 15px;
+        }
+        .remove-btn {
+            margin-left: auto;
+            background: none;
+            border: none;
+            color: #d32f2f;
+            font-size: 24px;
+            cursor: pointer;
+            padding: 4px 8px;
+        }
+        .summary {
+            background: #fff;
+            margin: 12px;
+            border-radius: 10px;
+            padding: 16px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        }
+        .summary-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 12px;
+            font-size: 15px;
+        }
+        .summary-row.total {
+            font-weight: 700;
+            font-size: 18px;
+            border-top: 1px solid #eee;
+            padding-top: 12px;
+            margin-bottom: 0;
+        }
+        .discount-toggle {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+        .discount-toggle button {
+            flex: 1;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            background: #fff;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        .discount-toggle button.active {
+            background: #333;
+            color: #fff;
+            border-color: #333;
+        }
+        .discount-input-wrap {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+        .discount-input {
+            flex: 1;
+            height: 40px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 0 10px;
+            font-size: 16px;
+        }
+        .materials-input {
+            width: 100%;
+            height: 40px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 0 10px;
+            font-size: 16px;
+            margin-bottom: 12px;
+        }
+        .bottom-bar {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: #fff;
+            border-top: 1px solid #e0e0e0;
+            padding: 12px 16px;
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            z-index: 20;
+        }
+        .total-display {
+            flex: 1;
+        }
+        .total-label {
+            font-size: 12px;
+            color: #666;
+        }
+        .total-value {
+            font-size: 20px;
+            font-weight: 700;
+        }
+        .btn {
+            padding: 12px 20px;
+            border-radius: 10px;
+            border: none;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .btn-primary {
+            background: #333;
+            color: #fff;
+        }
+        .btn-secondary {
+            background: #f0f0f0;
+            color: #222;
+        }
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: #888;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="header-row">
+            <button class="back-btn" onclick="goBack()">←</button>
+            <h1>Калькуляция</h1>
+            <div class="placeholder-spacer"></div>
+        </div>
+    </header>
+
+    <main id="app">
+        <div class="empty-state">Загрузка прайса…</div>
+    </main>
+
+    <div class="bottom-bar">
+        <div class="total-display">
+            <div class="total-label">Итого</div>
+            <div class="total-value" id="totalValue">0 ₽</div>
+        </div>
+        <button class="btn btn-secondary" onclick="clearCalculation()">Сброс</button>
+        <button class="btn btn-primary" onclick="goToRequest()">Оформить заявку</button>
+    </div>
+
+    <script>
+        const STORAGE_KEY = "master_crm_calculation_draft";
+        let priceData = [];
+        let calculation = [];
+        let discountType = "none";
+        let discountValue = 0;
+        let materialsAmount = 0;
+
+        function goBack() {
+            window.location.href = "/";
+        }
+
+        function formatPrice(val) {
+            return Math.round(val).toLocaleString("ru-RU") + " ₽";
+        }
+
+        function parsePriceText(text) {
+            if (!text) return null;
+            const trimmed = text.trim();
+            const rangeMatch = trimmed.match(/^([\d\s]+)\s*-\s*([\d\s]+)$/);
+            if (rangeMatch) {
+                const low = parseFloat(rangeMatch[1].replace(/\s/g, ""));
+                const high = parseFloat(rangeMatch[2].replace(/\s/g, ""));
+                if (!isNaN(low) && !isNaN(high)) {
+                    return { type: "range", low, high, text: trimmed };
+                }
+            }
+            const num = parseFloat(trimmed.replace(/\s/g, ""));
+            if (!isNaN(num)) {
+                return { type: "fixed", value: num, text: trimmed };
+            }
+            return { type: "text", text: trimmed };
+        }
+
+        function loadDraft() {
+            try {
+                const raw = sessionStorage.getItem(STORAGE_KEY);
+                if (!raw) return;
+                const data = JSON.parse(raw);
+                if (Array.isArray(data.calculation)) calculation = data.calculation;
+                if (typeof data.discountType === "string") discountType = data.discountType;
+                if (typeof data.discountValue === "number") discountValue = data.discountValue;
+                if (typeof data.materialsAmount === "number") materialsAmount = data.materialsAmount;
+            } catch (e) {
+                console.warn("Draft load error", e);
+            }
+        }
+
+        function saveDraft() {
+            const data = { calculation, discountType, discountValue, materialsAmount };
+            sessionStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+        }
+
+        function clearCalculation() {
+            if (!confirm("Очистить весь расчёт?")) return;
+            calculation = [];
+            discountType = "none";
+            discountValue = 0;
+            materialsAmount = 0;
+            saveDraft();
+            render();
+        }
+
+        function addItem(item, category) {
+            const parsed = parsePriceText(item.price);
+            const base = {
+                priceItemId: item.id,
+                categoryName: category.name,
+                name: item.name,
+                unit: item.unit || "шт",
+                unitPrice: parsed && parsed.type === "fixed" ? parsed.value : (parsed && parsed.type === "range" ? parsed.low : 0),
+                quantity: 1,
+                requiresManualPrice: !!(parsed && (parsed.type === "range" || parsed.type === "text")),
+                manualPrice: parsed && parsed.type === "text" ? 0 : null
+            };
+            calculation.push(base);
+            saveDraft();
+            render();
+        }
+
+        function removeItem(index) {
+            calculation.splice(index, 1);
+            saveDraft();
+            render();
+        }
+
+        function updateQuantity(index, delta, isPiece) {
+            const item = calculation[index];
+            let newQty = item.quantity + delta;
+            if (isPiece) {
+                if (newQty < 1) newQty = 1;
+                item.quantity = Math.floor(newQty);
+            } else {
+                if (newQty < 0.1) newQty = 0.1;
+                item.quantity = Math.max(0.1, Math.round(newQty * 10) / 10);
+            }
+            saveDraft();
+            render();
+        }
+
+        function setManualPrice(index, valueStr) {
+            const val = parseFloat(valueStr.replace(/\s/g, "").replace(",", "."));
+            if (!isNaN(val) && val >= 0) {
+                calculation[index].manualPrice = val;
+            }
+            saveDraft();
+            render();
+        }
+
+        function setDiscountType(type) {
+            discountType = type;
+            if (type === "none") discountValue = 0;
+            saveDraft();
+            render();
+        }
+
+        function setDiscountValue(valStr) {
+            const val = parseFloat(valStr.replace(/\s/g, "").replace(",", "."));
+            if (!isNaN(val) && val >= 0) {
+                discountValue = val;
+            }
+            saveDraft();
+            render();
+        }
+
+        function setMaterialsAmount(valStr) {
+            const val = parseFloat(valStr.replace(/\s/g, "").replace(",", "."));
+            materialsAmount = (isNaN(val) || val < 0) ? 0 : val;
+            saveDraft();
+            render();
+        }
+
+        function calcTotals() {
+            let work = 0;
+            calculation.forEach(it => {
+                const price = it.requiresManualPrice ? (it.manualPrice ?? 0) : it.unitPrice;
+                work += price * it.quantity;
+            });
+            work = Math.round(work * 100) / 100;
+
+            let discountAmount = 0;
+            if (discountType === "percent") {
+                const dv = Math.min(Math.max(discountValue, 0), 100);
+                discountAmount = Math.round(work * dv / 100 * 100) / 100;
+            } else if (discountType === "rubles") {
+                discountAmount = Math.min(Math.max(discountValue, 0), work);
+                discountAmount = Math.round(discountAmount * 100) / 100;
+            }
+
+            const materials = Math.max(materialsAmount, 0);
+            const total = Math.round((work - discountAmount + materials) * 100) / 100;
+            return { work, discountAmount, materials, total };
+        }
+
+        function render() {
+            const app = document.getElementById("app");
+            if (!priceData.length) {
+                app.innerHTML = '<div class="empty-state">Прайс пуст или не загружен</div>';
+                return;
+            }
+
+            const totals = calcTotals();
+            document.getElementById("totalValue").textContent = formatPrice(totals.total);
+
+            let html = "";
+            priceData.forEach(cat => {
+                const items = cat.items || [];
+                if (!items.length) return;
+                html += `<div class="category" data-cat-id="${cat.id}">`;
+                html += `<div class="category-header" onclick="toggleCategory(this)">`;
+                html += `<span>${escapeHtml(cat.name)}</span>`;
+                html += `<span class="toggle">▼</span>`;
+                html += `</div>`;
+                html += `<div class="category-items">`;
+                items.forEach(item => {
+                    const idxInCalc = calculation.findIndex(c => c.priceItemId === item.id);
+                    const inCalc = idxInCalc >= 0;
+                    const calcItem = inCalc ? calculation[idxInCalc] : null;
+
+                    html += `<div class="item">`;
+                    html += `<div class="item-name">${escapeHtml(item.name)}</div>`;
+                    const parsed = parsePriceText(item.price);
+                    let priceLabel = item.price;
+                    if (parsed && parsed.type === "range") {
+                        priceLabel = `${formatPrice(parsed.low)} – ${formatPrice(parsed.high)}`;
+                    } else if (parsed && parsed.type === "fixed") {
+                        priceLabel = formatPrice(parsed.value);
+                    }
+                    html += `<div class="item-price">${escapeHtml(priceLabel)} / ${escapeHtml(item.unit || "шт")}</div>`;
+
+                    if (inCalc) {
+                        const isPiece = (calcItem.unit || "шт").toLowerCase().replace(".","").trim() === "шт";
+                        html += `<div class="item-row">`;
+                        if (calcItem.requiresManualPrice) {
+                            html += `<div class="price-input-wrap">`;
+                            html += `<input type="number" class="price-input" placeholder="Цена для расчёта" value="${calcItem.manualPrice ?? ""}" oninput="setManualPrice(${idxInCalc}, this.value)" />`;
+                            html += `</div>`;
+                        }
+                        html += `<div class="qty-control">`;
+                        html += `<button class="qty-btn" onclick="updateQuantity(${idxInCalc}, -1, ${isPiece})">−</button>`;
+                        html += `<input class="qty-input" type="number" value="${calcItem.quantity}" readonly />`;
+                        html += `<button class="qty-btn" onclick="updateQuantity(${idxInCalc}, 1, ${isPiece})">+</button>`;
+                        html += `</div>`;
+                        html += `<button class="remove-btn" onclick="removeItem(${idxInCalc})" title="Удалить">✕</button>`;
+                        html += `</div>`;
+                    } else {
+                        html += `<div class="item-row">`;
+                        html += `<button class="btn btn-primary" style="flex:1" onclick="addItem(${JSON.stringify(item).replace(/"/g,"&quot;")}, ${JSON.stringify(cat).replace(/"/g,"&quot;")})">Добавить</button>`;
+                        html += `</div>`;
+                    }
+                    html += `</div>`;
+                });
+                html += `</div></div>`;
+            });
+
+            if (!calculation.length) {
+                html = `<div class="empty-state">Выберите услуги из прайса, чтобы начать расчёт</div>` + html;
+            }
+
+            // Summary block
+            html += `<div class="summary">`;
+            html += `<div class="summary-row"><span>Работы</span><span>${formatPrice(totals.work)}</span></div>`;
+
+            html += `<div style="margin:12px 0 8px;font-weight:600">Скидка</div>`;
+            html += `<div class="discount-toggle">`;
+            html += `<button class="${discountType==="none"?"active":""}" onclick="setDiscountType('none')">Нет</button>`;
+            html += `<button class="${discountType==="percent"?"active":""}" onclick="setDiscountType('percent')">%</button>`;
+            html += `<button class="${discountType==="rubles"?"active":""}" onclick="setDiscountType('rubles')">₽</button>`;
+            html += `</div>`;
+
+            if (discountType !== "none") {
+                const placeholder = discountType === "percent" ? "Процент скидки" : "Сумма скидки, ₽";
+                const maxAttr = discountType === "percent" ? 'max="100"' : '';
+                html += `<div class="discount-input-wrap">`;
+                html += `<input class="discount-input" type="number" ${maxAttr} placeholder="${placeholder}" value="${discountValue || ""}" oninput="setDiscountValue(this.value)" />`;
+                html += `</div>`;
+            }
+
+            html += `<div style="margin:12px 0 8px;font-weight:600">Материалы</div>`;
+            html += `<input class="materials-input" type="number" placeholder="Сумма материалов, ₽ (необязательно)" value="${materialsAmount || ""}" oninput="setMaterialsAmount(this.value)" />`;
+
+            html += `<div class="summary-row total"><span>Итого</span><span>${formatPrice(totals.total)}</span></div>`;
+            html += `</div>`;
+
+            app.innerHTML = html;
+
+            // Open first category by default
+            const firstCat = app.querySelector(".category");
+            if (firstCat) firstCat.classList.add("open");
+        }
+
+        function toggleCategory(headerEl) {
+            const cat = headerEl.parentElement;
+            cat.classList.toggle("open");
+            const toggle = headerEl.querySelector(".toggle");
+            toggle.textContent = cat.classList.contains("open") ? "▼" : "▶";
+        }
+
+        function escapeHtml(str) {
+            return String(str)
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;");
+        }
+
+        async function loadPrices() {
+            try {
+                const res = await fetch("/api/prices");
+                if (!res.ok) throw new Error("Failed to load prices");
+                priceData = await res.json();
+                loadDraft();
+                render();
+            } catch (e) {
+                console.error(e);
+                document.getElementById("app").innerHTML = `<div class="empty-state">Не удалось загрузить прайс</div>`;
+            }
+        }
+
+        function goToRequest() {
+            const totals = calcTotals();
+            if (totals.work <= 0 && totals.materials <= 0) {
+                alert("Добавьте хотя бы одну услугу или укажите материалы");
+                return;
+            }
+            const payload = {
+                calculation,
+                discountType,
+                discountValue,
+                materialsAmount,
+                total: totals.total
+            };
+            sessionStorage.setItem("master_crm_calculation_draft", JSON.stringify(payload));
+            window.location.href = "/";
+        }
+
+        loadPrices();
+    </script>
+</body>
+</html>
