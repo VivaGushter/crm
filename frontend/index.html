@@ -7,6 +7,17 @@
   <link rel="preconnect" href="https://api.fontshare.com">
   <link href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700,900&f[]=general-sans@400,500,600,700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/css/main.css">
+  <style>
+    .calculation-items{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+    .calculation-item{display:grid;grid-template-columns:minmax(0,1fr) 92px 108px auto;gap:8px;align-items:center;padding:10px;border:1px solid var(--border);border-radius:9px;background:var(--surface2)}
+    .calculation-item-name{font-weight:700;overflow-wrap:anywhere}
+    .calculation-item-meta{font-size:13px;color:var(--muted);margin-top:2px}
+    .calculation-item input{min-height:36px;padding:6px 8px}
+    .calculation-item-remove{min-height:36px;padding:5px 9px;white-space:nowrap}
+    .calculation-total{margin-top:10px;font-weight:700}
+    .calculation-empty{padding:10px;color:var(--muted);border:1px dashed var(--border);border-radius:9px}
+    @media(max-width:620px){.calculation-item{grid-template-columns:1fr 1fr auto}.calculation-item-info{grid-column:1/-1}.calculation-item-remove{grid-column:3}.calculation-item input{width:100%}}
+  </style>
 </head>
 <body>
   <section id="loginView" class="login">
@@ -31,6 +42,7 @@
             <button class="btn btn-secondary" id="menuBtn">☰ Меню</button>
             <div class="dropdown-content" id="dropdownMenu">
               <button onclick="selectMenuItem('price')">📋 Прайс</button>
+              <button onclick="selectMenuItem('calculation')">🧮 Калькуляция</button>
               <button onclick="selectMenuItem('clients')">Клиенты</button>
               <button onclick="selectMenuItem('analytics')">Аналитика</button>
               <button onclick="selectMenuItem('report')">Отчёт</button>
@@ -43,57 +55,25 @@
         </div>
       </header>
       <section class="stats"><div class="card stat"><small class="muted">Всего</small><b id="statTotal">0</b></div><div class="card stat"><small class="muted">Сегодня</small><b id="statToday">0</b></div><div class="card stat"><small class="muted">Назначено</small><b id="statScheduled">0</b></div><div class="card stat"><small class="muted">Завершено</small><b id="statDone">0</b></div><div class="card stat"><small class="muted">Сумма завершённых</small><b id="statRevenue">0 ₽</b></div></section>
-      
       <div class="view-switch"><button class="btn btn-sm active" data-view="month">Месяц</button><button class="btn btn-sm" data-view="week">Неделя</button><button class="btn btn-sm" data-view="day">День</button></div>
-      
-      <div class="card month-view" id="monthView">
-        <h2 style="margin:0">Календарь</h2><div class="sub">Выбери день, чтобы увидеть назначенные заявки.</div>
-        <div class="calendar-tools"><button class="btn btn-secondary" id="prevMonth">←</button><div id="monthLabel" class="month"></div><button class="btn btn-secondary" id="nextMonth">→</button></div>
-        <div class="week"><div>Пн</div><div>Вт</div><div>Ср</div><div>Чт</div><div>Пт</div><div>Сб</div><div>Вс</div></div>
-        <div id="calendar" class="days"></div>
-      </div>
-      
-      <div class="card week-view hidden" id="weekView">
-        <div class="calendar-tools"><button class="btn btn-secondary" id="prevWeek">←</button><div id="weekLabel" class="month"></div><button class="btn btn-secondary" id="nextWeek">→</button></div>
-        <div id="weekGrid" style="display:grid;grid-template-columns:1fr;gap:8px"></div>
-      </div>
-      
-      <div class="card day-view hidden" id="dayView">
-        <div class="calendar-tools"><button class="btn btn-secondary" id="prevDay">←</button><div id="dayLabel" class="month"></div><button class="btn btn-secondary" id="nextDay">→</button></div>
-        <div id="dayList"></div>
-      </div>
-      
+      <div class="card month-view" id="monthView"><h2 style="margin:0">Календарь</h2><div class="sub">Выбери день, чтобы увидеть назначенные заявки.</div><div class="calendar-tools"><button class="btn btn-secondary" id="prevMonth">←</button><div id="monthLabel" class="month"></div><button class="btn btn-secondary" id="nextMonth">→</button></div><div class="week"><div>Пн</div><div>Вт</div><div>Ср</div><div>Чт</div><div>Пт</div><div>Сб</div><div>Вс</div></div><div id="calendar" class="days"></div></div>
+      <div class="card week-view hidden" id="weekView"><div class="calendar-tools"><button class="btn btn-secondary" id="prevWeek">←</button><div id="weekLabel" class="month"></div><button class="btn btn-secondary" id="nextWeek">→</button></div><div id="weekGrid" style="display:grid;grid-template-columns:1fr;gap:8px"></div></div>
+      <div class="card day-view hidden" id="dayView"><div class="calendar-tools"><button class="btn btn-secondary" id="prevDay">←</button><div id="dayLabel" class="month"></div><button class="btn btn-secondary" id="nextDay">→</button></div><div id="dayList"></div></div>
       <hr style="border:0;border-top:1px solid var(--border);margin:18px 0">
       <div class="row"><div><h2 id="dateTitle" style="margin:0">Заявки на день</h2><div class="sub">Нажми «Изменить」для правки заявки.</div></div><button class="btn btn-primary desktop-new" id="newRequestTop">+ Новая заявка</button></div>
-      <div class="filters">
-        <input id="search" placeholder="Поиск: клиент, адрес, телефон">
-        <select id="statusFilter"><option value="all">Все статусы</option><option value="new">Новые</option><option value="scheduled">Назначенные</option><option value="work">В работе</option><option value="done">Завершённые</option><option value="cancel">Отменённые</option></select>
-        <select id="assigneeFilter"><option value="all">Все мастера</option></select>
-        <input id="dateFilter" type="date">
-        <select id="sourceFilter"><option value="all">Все источники</option><option value="avito">Авито</option><option value="house_chats">Домовые чаты</option><option value="unknown">Не указан</option></select>
-        <select id="contactMethodFilter"><option value="all">Все способы связи</option><option value="">Не указано</option><option value="avito">Авито</option><option value="phone">Звонок</option><option value="telegram">Telegram</option><option value="max">Max</option></select>
-      </div>
+      <div class="filters"><input id="search" placeholder="Поиск: клиент, адрес, телефон"><select id="statusFilter"><option value="all">Все статусы</option><option value="new">Новые</option><option value="scheduled">Назначенные</option><option value="work">В работе</option><option value="done">Завершённые</option><option value="cancel">Отменённые</option></select><select id="assigneeFilter"><option value="all">Все мастера</option></select><input id="dateFilter" type="date"><select id="sourceFilter"><option value="all">Все источники</option><option value="avito">Авито</option><option value="house_chats">Домовые чаты</option><option value="unknown">Не указан</option></select><select id="contactMethodFilter"><option value="all">Все способы связи</option><option value="">Не указано</option><option value="avito">Авито</option><option value="phone">Звонок</option><option value="telegram">Telegram</option><option value="max">Max</option></select></div>
       <div id="requests" class="list"></div>
     </div>
     <button id="newRequestFab" class="btn btn-primary fab">+ Новая заявка</button>
   </main>
-
-  <div id="requestModal" class="modal"><div class="sheet"><div class="handle"></div><div class="row"><div><h2 id="requestFormTitle" style="margin:0">Новая заявка</h2><div class="sub">Все обязательные поля отмечены в форме.</div></div><button class="btn btn-secondary" data-close="requestModal">Закрыть</button></div><form id="requestForm"><input id="requestId" type="hidden"><div class="field"><label>Клиент</label><input id="client" required></div><div class="field"><label>Дата и время выезда</label><input id="visitDate" type="datetime-local" required></div><div class="field"><label>Адрес</label><input id="address" required></div><div class="field"><label>Телефон</label><input id="phone" required inputmode="tel"></div><div class="field"><label>Источник *</label><select id="source" required><option value="avito">Авито</option><option value="house_chats">Домовые чаты</option><option value="unknown">Не указан</option></select></div><div class="field"><label>Способ связи</label><select id="contactMethod"><option value="">Не указано</option><option value="avito">Авито</option><option value="phone">Звонок</option><option value="telegram">Telegram</option><option value="max">Max</option></select></div><div class="field"><label>Статус</label><select id="requestStatus"><option value="new">Новая</option><option value="scheduled">Назначена</option><option value="work">В работе</option><option value="done">Завершена</option><option value="cancel">Отменена</option></select></div><div class="field"><label>Цена</label><input id="price" type="number" min="0" step="1" value="0"></div><div class="field"><label>Ответственный</label><select id="assignee" required></select></div><div class="field"><label>Комментарий</label><textarea id="comment"></textarea></div><div class="two"><button type="button" class="btn btn-secondary" id="clearRequest">Очистить</button><button class="btn btn-primary" type="submit">Сохранить</button></div></form></div></div>
-
+  <div id="requestModal" class="modal"><div class="sheet"><div class="handle"></div><div class="row"><div><h2 id="requestFormTitle" style="margin:0">Новая заявка</h2><div class="sub">Все обязательные поля отмечены в форме.</div></div><button class="btn btn-secondary" data-close="requestModal">Закрыть</button></div><form id="requestForm"><input id="requestId" type="hidden"><div class="field"><label>Клиент</label><input id="client" required></div><div class="field"><label>Дата и время выезда</label><input id="visitDate" type="datetime-local" required></div><div class="field"><label>Адрес</label><input id="address" required></div><div class="field"><label>Телефон</label><input id="phone" required inputmode="tel"></div><div class="field"><label>Источник *</label><select id="source" required><option value="avito">Авито</option><option value="house_chats">Домовые чаты</option><option value="unknown">Не указан</option></select></div><div class="field"><label>Способ связи</label><select id="contactMethod"><option value="">Не указано</option><option value="avito">Авито</option><option value="phone">Звонок</option><option value="telegram">Telegram</option><option value="max">Max</option></select></div><div class="field"><label>Статус</label><select id="requestStatus"><option value="new">Новая</option><option value="scheduled">Назначена</option><option value="work">В работе</option><option value="done">Завершена</option><option value="cancel">Отменена</option></select></div><div class="field"><label>Цена</label><input id="price" type="number" min="0" step="1" value="0"></div><div id="calculationItemsBlock" class="field hidden"><label>Калькуляция / Состав работ</label><div id="calculationItemsList" class="calculation-items"></div><div id="calculationItemsTotal" class="calculation-total"></div></div><div class="field"><label>Ответственный</label><select id="assignee" required></select></div><div class="field"><label>Комментарий</label><textarea id="comment"></textarea></div><div class="two"><button type="button" class="btn btn-secondary" id="clearRequest">Очистить</button><button class="btn btn-primary" type="submit">Сохранить</button></div></form></div></div>
   <div id="usersModal" class="modal"><div class="sheet"><div class="handle"></div><div class="row"><div><h2 style="margin:0">Пользователи</h2><div class="sub">Доступно только администратору.</div></div><button class="btn btn-secondary" data-close="usersModal">Закрыть</button></div><button id="newUserBtn" class="btn btn-primary" style="width:100%;margin:16px 0">+ Добавить пользователя</button><div id="usersList" class="admin-users"></div></div></div>
-
   <div id="userModal" class="modal"><div class="sheet"><div class="handle"></div><div class="row"><h2 id="userFormTitle" style="margin:0">Новый пользователь</h2><button class="btn btn-secondary" data-close="userModal">Закрыть</button></div><form id="userForm"><input id="editUserId" type="hidden"><div class="field"><label>Логин</label><input id="newUserId" required pattern="[A-Za-z0-9_]+"></div><div class="field"><label>Имя</label><input id="newUserName" required></div><div class="field"><label id="passwordLabel">Пароль</label><input id="newUserPassword" type="password" minlength="4" required></div><div class="field"><label>Роль</label><select id="newUserRole"><option value="user">Мастер</option><option value="manager">Менеджер</option><option value="admin">Администратор</option></select></div><div class="two"><button id="deleteUserBtn" type="button" class="btn btn-danger hidden">Удалить</button><button type="submit" class="btn btn-primary">Сохранить</button></div></form></div></div>
-
   <div id="reportModal" class="modal"><div class="sheet"><div class="handle"></div><div class="row"><div><h2 style="margin:0">📊 Отчёт по заявкам</h2><div class="sub">Период и статистика по источникам.</div></div><button class="btn btn-secondary" data-close="reportModal">Закрыть</button></div><div class="field"><label>С</label><input id="reportDateFrom" type="date"></div><div class="field"><label>По</label><input id="reportDateTo" type="date"></div><button id="loadReportBtn" class="btn btn-primary" style="width:100%;margin:16px 0">Показать отчёт</button><div id="reportSummary" class="meta" style="margin-top:16px"></div><table id="reportTable" class="report-table hidden"><thead><tr><th>Источник</th><th class="num">Всего</th><th class="num">Завершено</th><th class="num">Выручка</th></tr></thead><tbody></tbody></table></div></div>
-
   <div id="analyticsModal" class="modal"><div class="sheet"><div class="handle"></div><div class="row"><div><h2 style="margin:0">📈 Аналитика</h2><div class="sub">Обзор по всем заявкам.</div></div><button class="btn btn-secondary" data-close="analyticsModal">Закрыть</button></div><div id="analyticsContent" class="meta" style="margin-top:16px"></div></div></div>
-
   <div id="clientsModal" class="modal"><div class="sheet"><div class="handle"></div><div class="row"><div><h2 style="margin:0">👥 Клиенты</h2><div class="sub">Последние клиенты. Нажми для деталей.</div></div><button class="btn btn-secondary" data-close="clientsModal">Закрыть</button></div><div id="clientsList" class="client-list" style="margin-top:16px"></div><button id="showAllClientsBtn" class="btn btn-primary" style="width:100%;margin-top:16px">Показать всех клиентов</button><button id="exportClientsBtn" class="btn btn-secondary" style="width:100%;margin-top:8px">📥 Скачать CSV</button></div></div>
-
   <div id="clientDetailModal" class="modal"><div class="sheet"><div class="handle"></div><div class="row"><div><h2 id="clientDetailName" style="margin:0">Клиент</h2><div class="sub">История заявок.</div></div><button class="btn btn-secondary" data-close="clientDetailModal">Закрыть</button></div><div id="clientDetailStats" class="meta" style="margin-top:16px"></div><div id="clientDetailRequests" class="list" style="margin-top:16px"></div></div></div>
-
   <div id="auditModal" class="modal"><div class="sheet"><div class="handle"></div><div class="row"><div><h2 style="margin:0">📋 Аудит-лог</h2><div class="sub">История изменений.</div></div><button class="btn btn-secondary" data-close="auditModal">Закрыть</button></div><div id="auditList" class="list" style="margin-top:16px"></div></div></div>
-
   <script type="module" src="/static/js/app.js"></script>
 </body>
 </html>
