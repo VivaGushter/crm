@@ -17,6 +17,10 @@
     .edit-mode .item{padding-right:8px}
     @media(min-width:701px){.item{grid-template-columns:2fr 1fr 80px;grid-template-areas:none;gap:10px;padding:10px}.item-name{display:none}.item-header{display:block;background:var(--surface2)}.item-price{color:inherit}}
   </style>
+  <script>
+    // Тема — до загрузки страницы
+    (function(){const saved=localStorage.getItem('master_crm_theme');if(saved){document.documentElement.dataset.theme=saved;return}document.documentElement.dataset.theme=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';})();
+  </script>
 </head>
 <body>
   <div class="shell">

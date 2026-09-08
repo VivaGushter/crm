@@ -16,6 +16,10 @@
     .empty{padding:24px;text-align:center;color:var(--muted);border:1px dashed var(--border);border-radius:var(--radius)}
     .perm-item.disabled{opacity:0.5}.perm-item.disabled input{cursor:not-allowed}
   </style>
+  <script>
+    // Тема — до загрузки страницы
+    (function(){const saved=localStorage.getItem('master_crm_theme');if(saved){document.documentElement.dataset.theme=saved;return}document.documentElement.dataset.theme=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';})();
+  </script>
 </head>
 <body>
   <div class="shell">
