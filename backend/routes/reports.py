@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from ..auth import get_current_user
+from ..auth import require_auth
 from ..config import ACTIVE_STATUSES, SOURCES
 from ..db import get_db
 
@@ -11,7 +11,7 @@ router = APIRouter(prefix="/api/report", tags=["report"])
 def report(
     date_from: str = Query(min_length=10, max_length=10),
     date_to: str = Query(min_length=10, max_length=10),
-    user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_auth),
 ) -> dict:
     if date_from > date_to:
         raise HTTPException(400, "Дата начала не может быть позже даты окончания")

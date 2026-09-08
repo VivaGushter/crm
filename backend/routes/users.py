@@ -1,9 +1,10 @@
 import json
 from fastapi import APIRouter, Depends, HTTPException
 
-from ..auth import get_current_user, hash_password, require_admin
+from ..auth import require_auth, require_admin, hash_password
 from ..db import get_db, now_iso
 from ..schemas import UserCreate, UserUpdate
+from ..sessions import delete_all_user_sessions
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 
@@ -19,7 +20,7 @@ def log_audit(conn, user_id: str, action: str, entity_type: str, entity_id: str 
 
 
 @router.get("")
-def list_users(user: dict = Depends(get_current_user)) -> list[dict]:
+def list_users(current_user: dict = Depends(require_auth)) -> list[dict]:
     conn = get_db()
     try:
         rows = conn.execute(
@@ -44,10 +45,7 @@ def create_user(payload: UserCreate, admin: dict = Depends(require_admin)) -> di
             (payload.id, hash_password(payload.password), payload.name, payload.role, now_iso()),
         )
         conn.commit()
-        
-        # Аудит-лог
         log_audit(conn, admin["id"], "create", "user", payload.id, None, {"id": payload.id, "name": payload.name, "role": payload.role})
-        
         return {"ok": True}
     finally:
         conn.close()
@@ -64,10 +62,8 @@ def update_user(user_id: str, payload: UserUpdate, admin: dict = Depends(require
             raise HTTPException(404, "User not found")
         if user_id == admin["id"] and payload.role == "user":
             raise HTTPException(400, "Нельзя снять роль админа с текущего аккаунта")
-
         changes, values = [], []
         old_values = dict(existing)
-        
         if payload.name is not None:
             changes.append("name = ?")
             values.append(payload.name)
@@ -81,11 +77,11 @@ def update_user(user_id: str, payload: UserUpdate, admin: dict = Depends(require
             values.append(user_id)
             conn.execute(f"UPDATE users SET {', '.join(changes)} WHERE id = ?", values)
             conn.commit()
-            
-            # Аудит-лог
+            # Если пароль изменён — отозвать все сессии
+            if payload.password:
+                delete_all_user_sessions(user_id)
             new_values = {**old_values, **{k: v for k, v in zip(["name", "password_hash", "role"], values) if v}}
             log_audit(conn, admin["id"], "update", "user", user_id, old_values, new_values)
-            
         return {"ok": True}
     finally:
         conn.close()
@@ -111,10 +107,8 @@ def delete_user(user_id: str, admin: dict = Depends(require_admin)) -> dict:
         ).fetchone()["count"]
         if references:
             raise HTTPException(400, "Нельзя удалить пользователя: на него назначены заявки")
-        
-        # Аудит-лог
         log_audit(conn, admin["id"], "delete", "user", user_id, dict(user_row), None)
-        
+        delete_all_user_sessions(user_id)
         conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
         conn.commit()
         return {"ok": True}
