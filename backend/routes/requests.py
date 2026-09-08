@@ -1,224 +1,216 @@
-from typing import Optional
+from fastapi import APIRouter, HTTPException, Depends
+from typing import List
+from backend.db import get_db
+from backend.schemas import RequestCreate, RequestUpdate, Request, CalculationItem
+from backend.auth import get_current_user
 import json
-
-from fastapi import APIRouter, Depends, HTTPException, Query
-
-from ..auth import get_current_user
-from ..config import CONTACT_METHODS, SOURCES, STATUSES
-from ..db import get_db, now_iso
-from ..schemas import RequestIn
+import math
 
 router = APIRouter(prefix="/api/requests", tags=["requests"])
 
-
-def validate_request_payload(conn, payload: RequestIn, creating: bool = False) -> None:
-    if payload.status not in STATUSES:
-        raise HTTPException(400, "Некорректный статус")
-    if payload.source not in SOURCES:
-        raise HTTPException(400, "Некорректный канал обращения")
-    if payload.contact_method not in CONTACT_METHODS:
-        raise HTTPException(400, "Некорректный способ связи")
-    if creating and payload.source == "unknown":
-        raise HTTPException(400, "Для новой заявки выберите канал обращения")
-    assignee = conn.execute("SELECT id FROM users WHERE id = ?", (payload.assignee,)).fetchone()
-    if assignee is None:
-        raise HTTPException(400, "Выбранный исполнитель не существует")
+VALID_DISCOUNT_TYPES = {"none", "percent", "rubles"}
+PIECE_UNITS = {"шт", "шт."}
 
 
-def log_audit(conn, user_id: str, action: str, entity_type: str, entity_id: str = None, old_values: dict = None, new_values: dict = None):
-    conn.execute(
-        """
-        INSERT INTO audit_log (user_id, action, entity_type, entity_id, old_values, new_values, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        """,
-        (user_id, action, entity_type, str(entity_id), json.dumps(old_values) if old_values else None, json.dumps(new_values) if new_values else None, now_iso()),
-    )
+def validate_calculation(payload: RequestCreate | RequestUpdate):
+    """Validate calculator data and calculate trustworthy totals on the server."""
+    discount_type = payload.discount_type or "none"
+    if discount_type not in VALID_DISCOUNT_TYPES:
+        raise HTTPException(status_code=422, detail="Недопустимый тип скидки")
+
+    materials = float(payload.materials_amount or 0)
+    if materials < 0:
+        raise HTTPException(status_code=422, detail="Сумма материалов не может быть отрицательной")
+
+    items = payload.calculation_items
+    if items is None:
+        return None
+
+    work_amount = 0.0
+    normalized_items = []
+    for position, item in enumerate(items):
+        quantity = float(item.quantity)
+        unit_price = float(item.unit_price)
+        if quantity <= 0:
+            raise HTTPException(status_code=422, detail=f"Количество для «{item.name_snapshot}» должно быть больше нуля")
+        if item.unit_snapshot.strip().lower() in PIECE_UNITS and not quantity.is_integer():
+            raise HTTPException(status_code=422, detail=f"Для «{item.name_snapshot}» в штуках допускается только целое количество")
+        if unit_price < 0:
+            raise HTTPException(status_code=422, detail=f"Цена для «{item.name_snapshot}» не может быть отрицательной")
+
+        line_total = round(quantity * unit_price, 2)
+        work_amount += line_total
+        normalized_items.append({
+            "price_item_id": item.price_item_id,
+            "category_name_snapshot": item.category_name_snapshot,
+            "name_snapshot": item.name_snapshot,
+            "unit_snapshot": item.unit_snapshot,
+            "unit_price": unit_price,
+            "quantity": quantity,
+            "line_total": line_total,
+            "sort_order": position,
+        })
+
+    work_amount = round(work_amount, 2)
+    discount_value = float(payload.discount_value or 0)
+    if discount_value < 0:
+        raise HTTPException(status_code=422, detail="Скидка не может быть отрицательной")
+    if discount_type == "percent" and discount_value > 100:
+        raise HTTPException(status_code=422, detail="Скидка в процентах не может превышать 100%")
+
+    if discount_type == "percent":
+        discount_amount = round(work_amount * discount_value / 100, 2)
+    elif discount_type == "rubles":
+        discount_amount = min(round(discount_value, 2), work_amount)
+    else:
+        discount_value = 0.0
+        discount_amount = 0.0
+
+    return {
+        "items": normalized_items,
+        "work_amount": work_amount,
+        "discount_type": discount_type,
+        "discount_value": discount_value,
+        "discount_amount": discount_amount,
+        "materials_amount": round(materials, 2),
+        "price": round(work_amount - discount_amount + materials, 2),
+    }
 
 
-@router.get("")
-def list_requests(
-    search: str = "",
-    status: str = "all",
-    assignee: str = "all",
-    source: str = "all",
-    contact_method: str = "all",
-    date_from: Optional[str] = Query(default=None),
-    date_to: Optional[str] = Query(default=None),
-    user: dict = Depends(get_current_user),
-) -> list[dict]:
-    sql = """
-        SELECT r.*, COALESCE(u.name, r.assignee) AS assignee_name
-        FROM requests r
-        LEFT JOIN users u ON u.id = r.assignee
-        WHERE 1 = 1
-    """
-    values = []
-    
-    # Мастер видит только свои заявки
-    if user["role"] == "user":
-        sql += " AND r.assignee = ?"
-        values.append(user["id"])
-    
-    if search.strip():
-        like = f"%{search.strip()}%"
-        sql += """ AND (
-            r.client LIKE ? COLLATE NOCASE OR
-            r.address LIKE ? COLLATE NOCASE OR
-            r.phone LIKE ? COLLATE NOCASE OR
-            COALESCE(r.comment, '') LIKE ? COLLATE NOCASE
-        ) """
-        values.extend([like, like, like, like])
-    if status != "all":
-        if status not in STATUSES:
-            raise HTTPException(400, "Некорректный статус")
-        sql += " AND r.status = ?"
-        values.append(status)
-    if assignee != "all":
-        sql += " AND r.assignee = ?"
-        values.append(assignee)
-    if source != "all":
-        if source not in SOURCES:
-            raise HTTPException(400, "Некорректный канал обращения")
-        sql += " AND r.source = ?"
-        values.append(source)
-    if contact_method != "all":
-        if contact_method not in CONTACT_METHODS:
-            raise HTTPException(400, "Некорректный способ связи")
-        sql += " AND r.contact_method = ?"
-        values.append(contact_method)
-    if date_from:
-        sql += " AND substr(r.visit_date, 1, 10) >= ?"
-        values.append(date_from)
-    if date_to:
-        sql += " AND substr(r.visit_date, 1, 10) <= ?"
-        values.append(date_to)
-    sql += " ORDER BY r.visit_date ASC, r.id DESC"
-
-    conn = get_db()
-    try:
-        rows = conn.execute(sql, values).fetchall()
-        return [dict(row) for row in rows]
-    finally:
-        conn.close()
+def save_calculation_items(cursor, request_id: int, items: list):
+    cursor.execute("DELETE FROM request_calculation_items WHERE request_id = ?", (request_id,))
+    for item in items:
+        cursor.execute("""
+            INSERT INTO request_calculation_items (
+                request_id, price_item_id, category_name_snapshot, name_snapshot,
+                unit_snapshot, unit_price, quantity, line_total, sort_order
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            request_id, item["price_item_id"], item["category_name_snapshot"],
+            item["name_snapshot"], item["unit_snapshot"], item["unit_price"],
+            item["quantity"], item["line_total"], item["sort_order"]
+        ))
 
 
-@router.post("")
-def create_request(payload: RequestIn, user: dict = Depends(get_current_user)) -> dict:
-    # Мастер, менеджер и админ могут создавать
-    if user["role"] not in ("user", "manager", "admin"):
-        raise HTTPException(403, "Недостаточно прав")
-    
-    conn = get_db()
-    try:
-        validate_request_payload(conn, payload, creating=True)
-        now = now_iso()
-        cur = conn.execute(
-            """
-            INSERT INTO requests
-            (client, visit_date, address, phone, status, price, comment, assignee, created_by, updated_at, source, contact_method)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                payload.client,
-                payload.visit_date,
-                payload.address,
-                payload.phone,
-                payload.status,
-                payload.price,
-                payload.comment or "",
-                payload.assignee,
-                user["id"],
-                now,
-                payload.source,
-                payload.contact_method,
-            ),
-        )
+def row_to_dict(row):
+    return dict(row) if row else None
+
+
+@router.get("", response_model=List[Request])
+def get_requests(current_user: dict = Depends(get_current_user)):
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM requests ORDER BY visit_date DESC, created_at DESC")
+        return [row_to_dict(row) for row in cursor.fetchall()]
+
+
+@router.get("/{request_id}", response_model=Request)
+def get_request(request_id: int, current_user: dict = Depends(get_current_user)):
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM requests WHERE id = ?", (request_id,))
+        request = row_to_dict(cursor.fetchone())
+        if not request:
+            raise HTTPException(status_code=404, detail="Заявка не найдена")
+        return request
+
+
+@router.get("/{request_id}/calculation", response_model=List[CalculationItem])
+def get_request_calculation(request_id: int, current_user: dict = Depends(get_current_user)):
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM requests WHERE id = ?", (request_id,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Заявка не найдена")
+        cursor.execute("""
+            SELECT * FROM request_calculation_items
+            WHERE request_id = ?
+            ORDER BY sort_order, id
+        """, (request_id,))
+        return [row_to_dict(row) for row in cursor.fetchall()]
+
+
+@router.post("", response_model=Request, status_code=201)
+def create_request(data: RequestCreate, current_user: dict = Depends(get_current_user)):
+    calculation = validate_calculation(data)
+    with get_db() as conn:
+        cursor = conn.cursor()
+        if calculation:
+            cursor.execute("""
+                INSERT INTO requests (
+                    client_name, phone, visit_date, address, status, price, notes,
+                    work_amount, discount_type, discount_value, discount_amount, materials_amount
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                data.client_name, data.phone, data.visit_date, data.address, data.status,
+                calculation["price"], data.notes, calculation["work_amount"],
+                calculation["discount_type"], calculation["discount_value"],
+                calculation["discount_amount"], calculation["materials_amount"]
+            ))
+        else:
+            cursor.execute("""
+                INSERT INTO requests (client_name, phone, visit_date, address, status, price, notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (data.client_name, data.phone, data.visit_date, data.address, data.status, data.price, data.notes))
+        request_id = cursor.lastrowid
+
+        if calculation:
+            save_calculation_items(cursor, request_id, calculation["items"])
+        cursor.execute("""
+            INSERT INTO audit_log (user_id, action, entity_type, entity_id, details)
+            VALUES (?, 'create', 'request', ?, ?)
+        """, (current_user["id"], request_id, json.dumps({"calculator": bool(calculation)}, ensure_ascii=False)))
         conn.commit()
-        
-        # Аудит-лог
-        log_audit(conn, user["id"], "create", "request", cur.lastrowid, None, payload.model_dump())
-        
-        return {"ok": True, "id": cur.lastrowid}
-    finally:
-        conn.close()
+        cursor.execute("SELECT * FROM requests WHERE id = ?", (request_id,))
+        return row_to_dict(cursor.fetchone())
 
 
-@router.put("/{request_id}")
-def update_request(request_id: int, payload: RequestIn, user: dict = Depends(get_current_user)) -> dict:
-    # Мастер, менеджер и админ могут редактировать
-    if user["role"] not in ("user", "manager", "admin"):
-        raise HTTPException(403, "Недостаточно прав")
-    
-    conn = get_db()
-    try:
-        validate_request_payload(conn, payload, creating=False)
-        exists = conn.execute("SELECT id FROM requests WHERE id = ?", (request_id,)).fetchone()
-        if exists is None:
-            raise HTTPException(404, "Заявка не найдена")
-        
-        # Мастер может редактировать только свои заявки
-        if user["role"] == "user":
-            req = conn.execute("SELECT assignee FROM requests WHERE id = ?", (request_id,)).fetchone()
-            if req["assignee"] != user["id"]:
-                raise HTTPException(403, "Можно редактировать только свои заявки")
-        
-        # Получаем старые значения для аудита
-        old = conn.execute("SELECT * FROM requests WHERE id = ?", (request_id,)).fetchone()
-        old_values = dict(old) if old else None
-        
-        now = now_iso()
-        conn.execute(
-            """
-            UPDATE requests SET
-                client=?, visit_date=?, address=?, phone=?, status=?, price=?, comment=?,
-                assignee=?, source=?, contact_method=?, updated_at=?
-            WHERE id=?
-            """,
-            (
-                payload.client,
-                payload.visit_date,
-                payload.address,
-                payload.phone,
-                payload.status,
-                payload.price,
-                payload.comment or "",
-                payload.assignee,
-                payload.source,
-                payload.contact_method,
-                now,
-                request_id,
-            ),
-        )
+@router.put("/{request_id}", response_model=Request)
+def update_request(request_id: int, data: RequestUpdate, current_user: dict = Depends(get_current_user)):
+    calculation = validate_calculation(data)
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM requests WHERE id = ?", (request_id,))
+        existing = row_to_dict(cursor.fetchone())
+        if not existing:
+            raise HTTPException(status_code=404, detail="Заявка не найдена")
+
+        updates = data.model_dump(exclude_unset=True, exclude={"calculation_items"})
+        if calculation:
+            updates.update({
+                "price": calculation["price"],
+                "work_amount": calculation["work_amount"],
+                "discount_type": calculation["discount_type"],
+                "discount_value": calculation["discount_value"],
+                "discount_amount": calculation["discount_amount"],
+                "materials_amount": calculation["materials_amount"],
+            })
+        if updates:
+            set_clause = ", ".join(f"{field} = ?" for field in updates)
+            values = list(updates.values()) + [request_id]
+            cursor.execute(f"UPDATE requests SET {set_clause}, updated_at = datetime('now') WHERE id = ?", values)
+        if calculation:
+            save_calculation_items(cursor, request_id, calculation["items"])
+
+        cursor.execute("""
+            INSERT INTO audit_log (user_id, action, entity_type, entity_id, details)
+            VALUES (?, 'update', 'request', ?, ?)
+        """, (current_user["id"], request_id, json.dumps({"calculator": bool(calculation)}, ensure_ascii=False)))
         conn.commit()
-        
-        # Аудит-лог
-        log_audit(conn, user["id"], "update", "request", request_id, old_values, payload.model_dump())
-        
-        return {"ok": True}
-    finally:
-        conn.close()
+        cursor.execute("SELECT * FROM requests WHERE id = ?", (request_id,))
+        return row_to_dict(cursor.fetchone())
 
 
-@router.delete("/{request_id}")
-def delete_request(request_id: int, user: dict = Depends(get_current_user)) -> dict:
-    # Только админ и менеджер могут удалять
-    if user["role"] not in ("admin", "manager"):
-        raise HTTPException(403, "Только администратор и менеджер могут удалять заявки")
-    
-    conn = get_db()
-    try:
-        # Получаем старые значения для аудита
-        old = conn.execute("SELECT * FROM requests WHERE id = ?", (request_id,)).fetchone()
-        old_values = dict(old) if old else None
-        
-        cur = conn.execute("DELETE FROM requests WHERE id = ?", (request_id,))
+@router.delete("/{request_id}", status_code=204)
+def delete_request(request_id: int, current_user: dict = Depends(get_current_user)):
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM requests WHERE id = ?", (request_id,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Заявка не найдена")
+        cursor.execute("DELETE FROM requests WHERE id = ?", (request_id,))
+        cursor.execute("""
+            INSERT INTO audit_log (user_id, action, entity_type, entity_id, details)
+            VALUES (?, 'delete', 'request', ?, ?)
+        """, (current_user["id"], request_id, "{}"))
         conn.commit()
-        if not cur.rowcount:
-            raise HTTPException(404, "Заявка не найдена")
-        
-        # Аудит-лог
-        log_audit(conn, user["id"], "delete", "request", request_id, old_values, None)
-        
-        return {"ok": True}
-    finally:
-        conn.close()
