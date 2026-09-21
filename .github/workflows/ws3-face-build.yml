@@ -1,0 +1,39 @@
+name: WS3 Bridge Build
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - ".github/workflows/ws3-face-build.yml"
+      - "tools/ws3_daemon_main.lua.b64"
+
+permissions:
+  contents: read
+
+jobs:
+  build-face:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone Vela Shell Bridge toolchain
+        shell: pwsh
+        run: git clone --depth 1 https://github.com/FangAiden/Vela-Shell-Bridge.git bridge
+
+      - name: Inject dedicated WS3 daemon
+        shell: pwsh
+        run: |
+          $b64 = (Get-Content -Raw "tools/ws3_daemon_main.lua.b64").Trim()
+          [IO.File]::WriteAllBytes("bridge/watchface/fprj/app/lua/main.lua", [Convert]::FromBase64String($b64))
+
+      - name: Build watchface
+        shell: pwsh
+        run: |
+          & "./bridge/scripts/build_face.ps1" -FaceName "WS3RUBridge.face" -FaceId "219667633"
+          if (!(Test-Path "bridge/bin/WS3RUBridge.face")) { throw "WS3RUBridge.face was not produced" }
+
+      - name: Upload face
+        uses: actions/upload-artifact@v4
+        with:
+          name: WS3RUBridge
+          path: bridge/bin/WS3RUBridge.face
+          if-no-files-found: error
